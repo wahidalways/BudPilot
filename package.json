@@ -39,7 +39,9 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"src/**/*.test.ts\""
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"src/**/*.test.ts\"",
+    "desktop:dev": "npm --prefix desktop run dev",
+    "desktop:build": "node desktop/build.mjs"
   },
   "private": true
 }

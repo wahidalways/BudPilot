@@ -48,3 +48,7 @@ __pycache__/
 # EAS credentials download
 credentials.json
 credentials/
+
+# desktop (Electron) build output
+desktop/web/
+desktop/release/

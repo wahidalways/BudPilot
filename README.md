@@ -6,14 +6,17 @@ Control your Bluetooth earbuds from your phone and your PC: noise control, EQ an
 
 ## Status
 
-Early work (0.1.0). There is nothing to install yet.
+Early work (0.1.0), Windows first.
 
 - [x] Bluetooth handshake with JieLi-based earbuds, tested on a real HOCO EQ35 ANC
-- [ ] Battery and device info
-- [ ] Noise control: ANC, transparency, off
-- [ ] EQ presets and custom EQ
+- [x] Battery for each earbud and the case
+- [x] Noise control: off, noise cancelling, transparency
+- [x] EQ presets
+- [x] Game mode
+- [x] Windows app
+- [ ] Custom EQ (band sliders)
+- [ ] Touch controls
 - [ ] Android app
-- [ ] Windows app
 
 ## Supported earbuds
 
@@ -33,11 +36,22 @@ Built with Expo SDK 58 and TypeScript.
 
 ```bash
 npm install
+npm --prefix desktop install
 npm test          # protocol tests
-npx expo start
 ```
 
-Bluetooth needs a development build. It does not work in Expo Go.
+### Windows app
+
+The Windows app is the Expo web build inside an Electron window ([desktop/](desktop/)). It reaches the earbuds through Web Bluetooth.
+
+- Try changes live: run `npx expo start --web` in one terminal and `npm run desktop:dev` in another.
+- Build the app: `npm run desktop:build` writes `desktop/release/BudPilot-<version>.exe`, a portable app with no installer. The version comes from the root `package.json`.
+
+The exe isn't code-signed, so Windows SmartScreen may warn on first start: choose **More info**, then **Run anyway**.
+
+### Android app
+
+Not started yet. Bluetooth will need a development build; it does not work in Expo Go.
 
 `tools/probe/` is a Python test bench for trying commands from a Windows PC: `pip install bleak`, then `python tools/probe/probe.py`. Disconnect any other app that is connected to the earbuds over Bluetooth LE first.
 

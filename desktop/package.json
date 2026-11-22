@@ -1,0 +1,17 @@
+{
+  "name": "budpilot-desktop",
+  "productName": "BudPilot",
+  "version": "0.1.0",
+  "description": "BudPilot for Windows",
+  "author": "wahidalways",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron . --dev",
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "45.4.1",
+    "electron-builder": "26.18.0"
+  }
+}

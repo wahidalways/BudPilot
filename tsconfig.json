@@ -9,7 +9,8 @@
       "@/assets/*": [
         "./assets/*"
       ]
-    }
+    },
+    "allowImportingTsExtensions": true
   },
   "include": [
     "**/*.ts",
@@ -19,6 +20,9 @@
   ],
   "exclude": [
     "node_modules",
+    "android",
+    "ios",
+    "desktop",
     "**/*.test.ts"
   ]
 }
