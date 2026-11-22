@@ -1,5 +1,5 @@
 import { jlAuthResponse } from "./auth.ts";
-import { BLOCKED_OPS, encodeFrame, FLAG_COMMAND, FLAG_WANTS_REPLY, FrameReader } from "./rcsp.ts";
+import { ALLOWED_CUSTOM, BLOCKED_OPS, encodeFrame, FLAG_COMMAND, FLAG_WANTS_REPLY, FrameReader, OP } from "./rcsp.ts";
 
 /** A connected BLE link to the earbuds' AE01 (write) / AE02 (notify) characteristics. */
 export interface Transport {
@@ -40,9 +40,21 @@ export class RcspClient {
     if (!same(verdict, PASS)) throw new Error("The earbuds rejected the handshake.");
   }
 
+  /** Sends a custom (0xFF) command, only for payloads on the allow list. */
+  custom(data: number[], ms = 3000): Promise<Uint8Array> {
+    if (!ALLOWED_CUSTOM.some((p) => p.every((b, i) => data[i] === b))) {
+      return Promise.reject(new Error("That custom command isn't on BudPilot's allow list."));
+    }
+    return this.send(OP.custom, data, ms);
+  }
+
   /** Sends a command and resolves with the reply data (after status and sn). */
   request(op: number, data: number[], ms = 3000): Promise<Uint8Array> {
     if (BLOCKED_OPS.has(op)) return Promise.reject(new Error(`Command ${hex(op)} is blocked: it can change firmware or reset the earbuds.`));
+    return this.send(op, data, ms);
+  }
+
+  private send(op: number, data: number[], ms: number): Promise<Uint8Array> {
     const sn = (this.sn = (this.sn + 1) & 0xff);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

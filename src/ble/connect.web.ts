@@ -19,15 +19,26 @@ type Device = EventTarget & {
 };
 type Bluetooth = { requestDevice(options: object): Promise<Device> };
 
-/** Asks the browser (or the Electron shell) for the earbuds and opens the JieLi channel. */
-export async function connectEarbuds(): Promise<Transport> {
+let known: Device | undefined; // the earbuds picked last, so reconnecting needs no device picker
+
+export const hasKnownEarbuds = () => !!known;
+
+/** Asks the browser (or the Electron shell) for the earbuds and opens the JieLi channel.
+ * `reuse` reconnects to the earbuds picked before, e.g. after they went back in the case. */
+export async function connectEarbuds({ reuse = false } = {}): Promise<Transport> {
   const bluetooth = (navigator as Navigator & { bluetooth?: Bluetooth }).bluetooth;
   if (!bluetooth) throw new Error("Bluetooth isn't available here. Use the BudPilot app, Edge or Chrome.");
   let device: Device;
-  try {
-    device = await bluetooth.requestDevice({ filters: [{ namePrefix: "HOCO" }, { services: [SERVICE] }], optionalServices: [SERVICE] });
-  } catch {
-    throw new Error("Couldn't find your earbuds. Take them out of the case and disconnect other apps that control them.");
+  if (reuse) {
+    if (!known) throw new Error("No earbuds picked yet.");
+    device = known;
+  } else {
+    try {
+      device = await bluetooth.requestDevice({ filters: [{ namePrefix: "HOCO" }, { services: [SERVICE] }], optionalServices: [SERVICE] });
+    } catch {
+      throw new Error("Couldn't find your earbuds. Take them out of the case and disconnect other apps that control them.");
+    }
+    known = device;
   }
   const server = await device.gatt!.connect();
   const service = await server.getPrimaryService(SERVICE);
@@ -38,11 +49,18 @@ export async function connectEarbuds(): Promise<Transport> {
     onData(new Uint8Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength)));
   });
   await n.startNotifications();
+  // One GATT write at a time: overlapping writes fail with "GATT operation already in progress".
+  let writing: Promise<unknown> = Promise.resolve();
   return {
     name: device.name ?? "Earbuds",
-    write: (b) => w.writeValueWithoutResponse(b as Uint8Array<ArrayBuffer>),
+    write: (b) => {
+      const done = writing.then(() => w.writeValueWithoutResponse(b as Uint8Array<ArrayBuffer>));
+      writing = done.catch(() => {});
+      return done;
+    },
     onData: (cb) => (onData = cb),
-    onDisconnect: (cb) => device.addEventListener("gattserverdisconnected", cb),
+    // once: a reconnect reuses the device object, so each link's listener must fire only for its own drop
+    onDisconnect: (cb) => device.addEventListener("gattserverdisconnected", cb, { once: true }),
     close: async () => device.gatt!.disconnect(),
   };
 }

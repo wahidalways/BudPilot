@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { jlAuthResponse } from "./auth.ts";
-import type { Transport } from "./client.ts";
-import { decodeSettings, decodeSysInfo, Earbuds } from "./earbuds.ts";
+import { RcspClient, type Transport } from "./client.ts";
+import { decodeSettings, decodeSysInfo, decodeWear, Earbuds, noiseModeMask } from "./earbuds.ts";
 import { encodeFrame, FrameReader } from "./rcsp.ts";
 
 const hex = (s: string) => Uint8Array.from(Buffer.from(s.replace(/\s+/g, ""), "hex"));
@@ -21,6 +21,15 @@ test("decodes real settings: name, batteries, work mode", () => {
   assert.deepEqual(decodeSettings(SETTINGS), {
     name: "HOCO EQ35 ANC",
     battery: { left: { percent: 100, charging: true }, right: { percent: 100, charging: true }, case: { percent: 94, charging: false } },
+    // Hoco's app shows the same: tap = Play/Pause (5), double = Next (4), three = Previous (3), both ears
+    keys: [
+      { ear: 1, taps: 1, fn: 5 },
+      { ear: 2, taps: 1, fn: 5 },
+      { ear: 1, taps: 2, fn: 4 },
+      { ear: 2, taps: 2, fn: 4 },
+      { ear: 1, taps: 3, fn: 3 },
+      { ear: 2, taps: 3, fn: 3 },
+    ],
     gameMode: false,
   });
 });
@@ -30,6 +39,7 @@ test("decodes real sys info: noise mode, stored gains, EQ presets", () => {
   assert.equal(s.anc, 0);
   assert.deepEqual(s.ancGains?.[1], [0x40, 0, 0x40, 0, 0x40, 0, 0x40, 0]);
   assert.equal(s.eqMode, 9);
+  assert.deepEqual(s.eqGains, [0, 0, 0, 0, 0, 3, 0, 1, 0, 0]); // Hoco's Custom: 1K = 3, 4K = 1
   assert.equal(s.eqPresets?.length, 10);
   assert.deepEqual(s.eqPresets?.[9], { mode: 9, gains: [0, 0, 0, 0, 0, 3, 0, 1, 0, 0] });
   assert.equal(s.eqPresets?.[0].gains[0], -10);
@@ -84,5 +94,50 @@ test("opens over a fake link, then switches to transparency with the stored gain
   assert.equal(e.state.eqPresets.length, 10);
   await e.setAnc(2);
   assert.equal(e.state.anc, 2);
-  assert.deepEqual(written.at(-1), hex("fe dc ba c0 08 00 0d 03 ff 0a 0d 02 40 00 40 00 40 00 40 00 ef"));
+  assert.equal(e.state.ancLevel, 1); // stored 0x4000 of max 0x4000
+  assert.deepEqual(written.at(-1), hex("fe dc ba c0 08 00 0d 04 ff 0a 0d 02 40 00 40 00 40 00 40 00 ef"));
+
+  await e.setEq(9, [-5, 0, 0, 0, 0, 3, 0, 1, 0, 5]);
+  assert.deepEqual(written.at(-1), hex("fe dc ba c0 08 00 0f 05 ff 0c 04 09 fb 00 00 00 00 03 00 01 00 05 ef"));
+  assert.deepEqual(e.state.eqPresets.find((p) => p.mode === 9)?.gains, [-5, 0, 0, 0, 0, 3, 0, 1, 0, 5]);
+
+  await e.setKey(1, 3, 4);
+  assert.deepEqual(written.at(-1), hex("fe dc ba c0 c0 00 06 06 04 02 01 03 04 ef"));
+  assert.deepEqual(e.state.keys.find((k) => k.ear === 1 && k.taps === 3), { ear: 1, taps: 3, fn: 4 });
+
+  // the same bytes hoco.music sends (WearTestBean "FFFDF60%s", 2 = on)
+  await e.setWearDetection(true);
+  assert.deepEqual(written.at(-1), hex("fe dc ba c0 ff 00 05 07 ff fd f6 02 ef"));
+  assert.equal(e.state.wearDetection, true);
+
+  // Mid noise cancelling: current = 0.5 of max 0x4000 (the earbuds read this back exactly)
+  await e.setAnc(1, 0.5);
+  assert.deepEqual(written.at(-1), hex("fe dc ba c0 08 00 0d 08 ff 0a 0d 01 40 00 40 00 20 00 20 00 ef"));
+  assert.equal(e.state.ancLevel, 0.5);
+});
+
+test("reads noise strength from the earbuds' report", () => {
+  assert.equal(decodeSysInfo(hex("ff 0a 0d 01 40 00 40 00 06 66 06 66")).ancLevel, 0x0666 / 0x4000);
+  assert.equal(decodeSysInfo(hex("ff 0a 0d 00 00 00 00 00 00 00 00 00")).ancLevel, undefined);
+});
+
+test("decodes Hoco's wear-detection status pushes", () => {
+  assert.equal(decodeWear(hex("ff fd f6 02")), true);
+  assert.equal(decodeWear(hex("ff fd f6 01")), false);
+  assert.equal(decodeWear(hex("ff fd f6 07")), undefined);
+  assert.equal(decodeWear(hex("00 02 07 01")), undefined);
+});
+
+test("refuses custom commands that aren't on the allow list", async () => {
+  const { t } = fakeEarbuds();
+  const c = new RcspClient(t);
+  await assert.rejects(c.custom([0x0a, 0x01]), /allow list/);
+  await assert.rejects(c.request(0xff, [0xff, 0xfd, 0xf6, 0x02]), /blocked/);
+});
+
+test("sets the noise-mode list right after the handshake, before reading anything", async () => {
+  const { t, written } = fakeEarbuds();
+  await Earbuds.open(t, () => {}, noiseModeMask([0]));
+  // written[0..2] are the handshake; then Off only (bit 0 = 1), in the format hoco.music uses
+  assert.deepEqual(written[3], hex("fe dc ba c0 c0 00 07 01 05 0a 00 00 00 01 ef"));
 });

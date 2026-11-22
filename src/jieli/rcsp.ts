@@ -10,7 +10,13 @@ export const OP = {
   setSettings: 0xc0,
   getSettings: 0xc1,
   advChanged: 0xc2,
+  custom: 0xff,
 } as const;
+
+/** Custom (0xFF) payloads BudPilot may send, by prefix; vendors use 0xFF/0xF0 for things like factory reset. */
+export const ALLOWED_CUSTOM = [
+  [0xff, 0xfd, 0xf6], // Hoco wear detection: + 00 query, 01 off, 02 on (hoco.music WearTestBean)
+];
 
 // Firmware update, flash, file system, connection reset and custom (factory reset) opcodes.
 export const BLOCKED_OPS = new Set([
