@@ -131,8 +131,8 @@ export function useEarbuds() {
       setError(undefined);
       setStatus("connected");
       if (__DEV__) (globalThis as { __earbuds?: Earbuds }).__earbuds = e; // inspect from DevTools
-      if (drifted(e.state, pref.current)) {
-        await enqueue(() => applyNoise(e, pref.current!, true)).catch((err) => setError(message(err)));
+      if (p && drifted(e.state, p)) {
+        await enqueue(() => applyNoise(e, p, true)).catch((err) => setError(message(err)));
       }
       // keep up with changes made by the earbud buttons or other apps; skips a beat if one is still running
       let refreshing = false;

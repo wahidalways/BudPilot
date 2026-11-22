@@ -2,6 +2,7 @@
 // It lives in the tray, so it can keep the noise setting the user picked: the earbuds' firmware switches ANC on by
 // itself every time they power up, and only a running BudPilot can switch it back.
 const { app, BrowserWindow, Menu, Tray, nativeImage, nativeTheme, net, protocol, session } = require("electron");
+const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -75,7 +76,37 @@ function createWindow() {
     win.hide();
   });
 
+  // live mode: if the dev server isn't up yet, keep retrying instead of showing a blank window
+  if (DEV_URL) win.webContents.on("did-fail-load", () => setTimeout(() => win.loadURL(DEV_URL), 1500));
   win.loadURL(DEV_URL ?? "app://budpilot/");
+}
+
+// Game mode's auto switch: Windows' own "user notification state" says when something runs full screen
+// (2 = a full-screen app such as a borderless game or a video, 3 = a full-screen Direct3D game).
+const FULLSCREEN_PS =
+  "Add-Type -Namespace W -Name N -MemberDefinition '[DllImport(\"shell32.dll\")] public static extern int SHQueryUserNotificationState(out int s);';" +
+  " while ($true) { $s = 0; [void][W.N]::SHQueryUserNotificationState([ref]$s); [Console]::Out.WriteLine($s); Start-Sleep -Seconds 3 }";
+
+function watchFullscreen() {
+  if (process.platform !== "win32") return;
+  const ps = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", FULLSCREEN_PS], { windowsHide: true });
+  let full;
+  const tell = () => {
+    if (full !== undefined) win?.webContents.executeJavaScript(`globalThis.__budpilotFullscreen?.(${full})`).catch(() => {});
+  };
+  ps.stdout.on("data", (chunk) => {
+    for (const line of chunk.toString().split(/\r?\n/)) {
+      const state = line.trim();
+      if (!state) continue;
+      const now = state === "2" || state === "3";
+      if (now !== full) {
+        full = now;
+        tell();
+      }
+    }
+  });
+  win.webContents.on("did-finish-load", tell); // a reload forgets it
+  app.on("before-quit", () => ps.kill());
 }
 
 function createTray() {
@@ -122,6 +153,7 @@ app.whenReady().then(() => {
     fs.writeFileSync(firstRun, "");
   }
   createWindow();
+  watchFullscreen();
   tray = createTray();
 });
 

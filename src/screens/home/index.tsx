@@ -1,12 +1,15 @@
-import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { useCallback, useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { useAdaptiveAnc } from "@/hooks/use-adaptive-anc";
 import { useEarbuds } from "@/hooks/use-earbuds";
+import { useGameMode } from "@/hooks/use-game-mode";
 import type { Battery } from "@/jieli/earbuds";
 import { type Colors, useColors } from "@/theme";
 
-import { Card, cardStyles } from "./card";
+import { Card, cardStyles, ToggleRow } from "./card";
 import { EqualizerCard } from "./equalizer";
+import { GameTab } from "./game";
 import { NoiseControlCard } from "./noise-control";
 import { Segmented } from "./segmented";
 import { TouchControlsCard } from "./touch-controls";
@@ -14,6 +17,7 @@ import { TouchControlsCard } from "./touch-controls";
 const TABS = [
   { value: "sound", label: "Sound" },
   { value: "eq", label: "Equalizer" },
+  { value: "game", label: "Game" },
   { value: "controls", label: "Controls" },
 ] as const;
 type Tab = (typeof TABS)[number]["value"];
@@ -21,6 +25,10 @@ type Tab = (typeof TABS)[number]["value"];
 export function Home() {
   const c = useColors();
   const { status, state, error, busy, connect, disconnect, run, noisePref, setNoise } = useEarbuds();
+  const game = useGameMode({ state, connected: status === "connected", run });
+  const autoLevel = useCallback((level: number) => void run((e) => e.setAnc(1, level))(), [run]);
+  // Adaptive runs app-wide (any tab, or hidden in the tray)
+  const adaptive = useAdaptiveAnc(state, noisePref, autoLevel);
   const [tab, setTab] = useState<Tab>("sound");
 
   if (status === "reconnecting") {
@@ -95,7 +103,7 @@ export function Home() {
             state={state}
             pref={noisePref}
             onChoose={(p) => void setNoise(p)}
-            onAutoLevel={(level) => void run((e) => e.setAnc(1, level))()}
+            status={adaptive}
           />
           {state.wearDetection !== undefined && (
             <Card c={c}>
@@ -108,13 +116,12 @@ export function Home() {
               />
             </Card>
           )}
-          <Card c={c}>
-            <ToggleRow c={c} title="Game mode" detail="Lower audio delay, for games" value={state.gameMode} onChange={(on) => void run((e) => e.setGameMode(on))()} />
-          </Card>
         </>
       )}
 
       {tab === "eq" && <EqualizerCard c={c} state={state} onSet={(mode, gains) => run((e) => e.setEq(mode, gains))()} />}
+
+      {tab === "game" && <GameTab c={c} game={game} />}
 
       {tab === "controls" && <TouchControlsCard c={c} state={state} onSet={(ear, taps, fn) => run((e) => e.setKey(ear, taps, fn))()} />}
     </ScrollView>
@@ -131,25 +138,6 @@ function BatteryPill({ c, label, b }: { c: Colors; label: string; b: Battery }) 
       <Text style={[s.pillLabel, { color: c.muted }]}>{label}</Text>
       <Text style={[s.pillValue, { color: c.text }]}>{b ? `${b.percent}%` : "—"}</Text>
       {b?.charging && <Text style={[s.pillLabel, { color: c.accent }]}>Charging</Text>}
-    </View>
-  );
-}
-
-function ToggleRow({ c, title, detail, value, onChange }: { c: Colors; title: string; detail: string; value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <View style={s.header}>
-      <View style={s.grow}>
-        <Text style={[cardStyles.title, { color: c.text }]}>{title}</Text>
-        <Text style={{ color: c.muted }}>{detail}</Text>
-      </View>
-      <Switch
-        accessibilityLabel={title}
-        value={value}
-        onValueChange={onChange}
-        trackColor={{ true: c.accent, false: c.border }}
-        thumbColor="#FFFFFF"
-        {...({ activeThumbColor: "#FFFFFF" } as object)} // react-native-web's "on" knob (defaults to teal)
-      />
     </View>
   );
 }
