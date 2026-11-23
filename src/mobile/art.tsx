@@ -42,6 +42,25 @@ export const PinIcon = ({ color, size = 30 }: P) => (
 );
 export const BackIcon = ({ color, size = 24 }: P) => stroke("M15 6l-6 6 6 6", color, size, 2);
 
+// The Home tab's earbuds, drawn to sit with the Ionicons beside them: each bud is a round head (its speaker toward the
+// outside) on a stem, the stems side by side in the middle
+const BUDS = "M8 12.24A4.5 4.5 0 1 1 11 8V19a1.5 1.5 0 0 1-3 0ZM16 12.24A4.5 4.5 0 1 0 13 8V19a1.5 1.5 0 0 0 3 0Z";
+const SPEAKERS = "M4 8a1.15 1.15 0 1 0 2.3 0a1.15 1.15 0 1 0-2.3 0ZM17.7 8a1.15 1.15 0 1 0 2.3 0a1.15 1.15 0 1 0-2.3 0Z";
+/** Outlines at rest; `on` (the chosen tab): filled, with the speakers left open. */
+export const EarbudsGlyph = ({ color, size = 25, on }: P & { on: boolean }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24">
+    {on ? (
+      <Path d={BUDS + SPEAKERS} fill={color} fillRule="evenodd" />
+    ) : (
+      <>
+        <Path d={BUDS} stroke={color} strokeWidth={1.6} {...line} />
+        <Circle cx={5.15} cy={8} r={1.05} fill={color} />
+        <Circle cx={18.85} cy={8} r={1.05} fill={color} />
+      </>
+    )}
+  </Svg>
+);
+
 /** A tap gesture as dots, one per tap. */
 export const Dots = ({ n, color }: { n: number; color: string }) => (
   <Svg width={8} height={24} viewBox="0 0 8 24">

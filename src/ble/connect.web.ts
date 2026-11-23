@@ -23,6 +23,17 @@ type Bluetooth = { requestDevice(options: object): Promise<Device> };
 let known: Device | undefined; // the earbuds picked last, so reconnecting needs no device picker
 
 export const hasKnownEarbuds = () => !!known;
+export const knownEarbudsAddress = (): string | undefined => undefined; // the browser doesn't reveal it
+/** The browser handles Bluetooth being off in its own device picker. */
+export type BluetoothState = "on" | "off" | "unknown";
+export const bluetoothState = async (): Promise<BluetoothState> => "on";
+export const watchBluetooth = async (_cb: (s: BluetoothState) => void) => () => {};
+export const turnOnBluetooth = async () => true;
+export const hasBluetoothAccess = async () => true;
+
+/** Windows tells Shono where the earbuds' sound is through its shell (use-desktop onPcLink), not from here. */
+export const watchSoundHere = (_cb: (here: boolean | undefined) => void) => () => {};
+
 /** The browser asks for Bluetooth in its own device picker, so there's nothing to ask for ahead of it. */
 export const needsLocation = () => false;
 export const requestBluetoothAccess = async (): Promise<"granted" | "denied" | "blocked"> => "granted";

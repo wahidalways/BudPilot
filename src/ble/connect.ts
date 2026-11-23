@@ -1,9 +1,13 @@
-import { PermissionsAndroid, Platform, TurboModuleRegistry } from "react-native";
+import { AppState, PermissionsAndroid, Platform, TurboModuleRegistry } from "react-native";
 import type { Peripheral } from "react-native-ble-manager";
 
 import type { Transport } from "@/jieli/client";
 import { sampleTransport } from "@/jieli/sample";
 import { loadPref, savePref } from "@/utils/prefs";
+
+import { later } from "@/utils/later";
+
+import { logLine, onSoundDevicesChanged, soundDevices } from "../../modules/shono-keeper";
 
 /** Expo Go has no Bluetooth module: there Shono talks to sample earbuds, so every screen can be tried without a build. */
 const NO_BLUETOOTH = !TurboModuleRegistry.get("BleManager");
@@ -27,10 +31,79 @@ let known: string | undefined;
 const lastEarbuds = () => (known ??= loadPref<string>(LAST_KEY));
 
 export const hasKnownEarbuds = () => !!lastEarbuds();
+/** The earbuds' Bluetooth address (the same for sound and for Shono's link), once Shono has found them. */
+export const knownEarbudsAddress = () => lastEarbuds();
 
+const isEarbudsName = (name: string | undefined) => (name ?? "").toUpperCase().startsWith("HOCO");
 const isEarbuds = (p: Peripheral) =>
-  (p.name ?? p.advertising?.localName ?? "").toUpperCase().startsWith("HOCO") ||
+  isEarbudsName(p.name ?? p.advertising?.localName) ||
   !!p.advertising?.serviceUUIDs?.some((u) => u.toLowerCase() === SERVICE || u.toLowerCase() === "ae00");
+
+/** The earbuds' address when they're connected to this phone for sound: their control channel (Bluetooth LE) uses the
+ * same address, so Shono can connect to it straight away, without a scan. "unknown": Shono can't tell (no Bluetooth
+ * access yet, Bluetooth off, or no native module). */
+async function earbudsPlayingHere(): Promise<string | undefined | "unknown"> {
+  if (NO_BLUETOOTH || !(await hasBluetoothAccess()) || (await bluetoothState()) !== "on") return "unknown";
+  const devices = await soundDevices();
+  if (!devices) return "unknown";
+  const last = lastEarbuds();
+  return devices.find((d) => d.address === last || isEarbudsName(d.name))?.address;
+}
+
+/** Whether the earbuds' sound is on this phone (undefined: can't tell), now and whenever it changes. Shono follows the
+ * sound: it holds the earbuds' one control link while they play here, and lets another device have it otherwise. */
+export function watchSoundHere(cb: (here: boolean | undefined) => void): () => void {
+  if (NO_BLUETOOTH || Platform.OS !== "android") return () => {};
+  let alive = true;
+  let asked = 0; // a slower, older answer must not overwrite a newer one
+  const look = async () => {
+    const mine = ++asked;
+    const a = await earbudsPlayingHere();
+    if (alive && mine === asked) cb(a === "unknown" ? undefined : a !== undefined);
+  };
+  void look();
+  const sub = onSoundDevicesChanged(() => void look());
+  return () => {
+    alive = false;
+    sub.remove();
+  };
+}
+
+const startBle = async () => {
+  const BleManager = await ble();
+  started ??= BleManager.start({ showAlert: false });
+  await started;
+  return BleManager;
+};
+
+/** Whether Bluetooth is on. Sample earbuds and other platforms: always on. */
+export type BluetoothState = "on" | "off" | "unknown";
+const stateOf = (s: string): BluetoothState => (s === "on" ? "on" : s === "off" || s === "turning_off" ? "off" : "unknown");
+export async function bluetoothState(): Promise<BluetoothState> {
+  if (NO_BLUETOOTH || Platform.OS !== "android") return "on";
+  return stateOf(await (await startBle()).checkState());
+}
+/** Calls back whenever Bluetooth is switched on or off; returns the unsubscribe. */
+export async function watchBluetooth(cb: (s: BluetoothState) => void): Promise<() => void> {
+  if (NO_BLUETOOTH || Platform.OS !== "android") return () => {};
+  const sub = (await startBle()).onDidUpdateState((e) => cb(stateOf(e.state)));
+  return () => sub.remove();
+}
+/** Android's own "turn on Bluetooth" dialog; true once it's on. */
+export async function turnOnBluetooth(): Promise<boolean> {
+  if (NO_BLUETOOTH || Platform.OS !== "android") return true;
+  return (await startBle()).enableBluetooth().then(
+    () => true,
+    () => false,
+  );
+}
+/** Whether Shono may use Bluetooth (the access the first run asks for); the turn-on dialog needs it on Android 12+. */
+export async function hasBluetoothAccess(): Promise<boolean> {
+  if (NO_BLUETOOTH || Platform.OS !== "android") return true;
+  const P = PermissionsAndroid.PERMISSIONS;
+  const wanted = needsLocation() ? [P.ACCESS_FINE_LOCATION] : [P.BLUETOOTH_SCAN, P.BLUETOOTH_CONNECT];
+  return (await Promise.all(wanted.map((p) => PermissionsAndroid.check(p)))).every(Boolean);
+}
 
 /** Android 11 and older only let apps scan for Bluetooth devices with location access (and Location switched on). */
 export const needsLocation = () => Platform.OS === "android" && Number(Platform.Version) < 31;
@@ -76,32 +149,31 @@ export async function connectEarbuds({ reuse = false } = {}): Promise<Transport>
     await new Promise((r) => setTimeout(r, 700)); // like finding real ones
     return sampleTransport();
   }
-  const BleManager = await ble();
-  started ??= BleManager.start({ showAlert: false });
-  await started;
+  const BleManager = await startBle();
   if ((await requestBluetoothAccess()) !== "granted")
     throw new Error(needsLocation() ? "Shono needs location access to look for your earbuds." : "Shono needs Nearby devices access to reach your earbuds.");
   if ((await BleManager.checkState()) !== "on") throw new Error("Bluetooth is off. Turn it on to reach your earbuds.");
   // give up on an attempt after a while, like on Windows: a pending connect can sit on earbuds that went away
   const link = async (to: string) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancel = () => {};
     await Promise.race([
       BleManager.connect(to),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
+        cancel = later(() => {
           void BleManager.disconnect(to).catch(() => {});
           reject(new Error("The earbuds didn't answer."));
         }, CONNECT_TIMEOUT_MS);
       }),
-    ]).finally(() => clearTimeout(timer));
+    ]).finally(() => cancel());
   };
-  const last = lastEarbuds();
+  const playing = await earbudsPlayingHere();
+  const last = playing !== "unknown" && playing ? playing : lastEarbuds();
   let id: string;
   if (reuse) {
     if (!last) throw new Error("No earbuds found yet.");
     await link((id = last));
   } else {
-    // the earbuds from last time first (no scan needed), then a scan for any earbuds
+    // the earbuds playing on this phone, or the ones from last time, first (no scan needed); then a scan for any
     const direct = last ? await link(last).then(() => true, () => false) : false;
     id = direct ? last! : await find(BleManager);
     if (!direct) await link(id);
@@ -116,11 +188,16 @@ export async function connectEarbuds({ reuse = false } = {}): Promise<Transport>
   const subs = [
     BleManager.onDidUpdateValueForCharacteristic((e) => {
       const c = e.characteristic.toLowerCase();
-      if (e.peripheral === id && (c === NOTIFY || c === "ae02")) onData(Uint8Array.from(e.value));
+      if (e.peripheral !== id || (c !== NOTIFY && c !== "ae02")) return;
+      const bytes = Uint8Array.from(e.value);
+      // what the earbuds start themselves (not answers to Shono's reads), for the log: FE DC BA, then the flags
+      if (bytes[3] & 0x80) logLine(`earbuds said ${Array.from(bytes.subarray(3, 24), (x) => x.toString(16).padStart(2, "0")).join(" ")}`);
+      onData(bytes);
     }),
     BleManager.onDisconnectPeripheral((e) => {
       if (e.peripheral !== id) return;
       subs.forEach((s) => s.remove()); // each link's listeners fire only for its own drop
+      power.remove();
       onDrop();
     }),
   ];
@@ -131,6 +208,11 @@ export async function connectEarbuds({ reuse = false } = {}): Promise<Transport>
     await BleManager.disconnect(id).catch(() => {});
     throw e;
   }
+  // the link's pace: low power in the background (the radios of both phone and earbuds wake ~3-6x less; a put-back
+  // takes ~0.3-0.5 s there), balanced on screen (the user's choice)
+  const pace = (state: string) => void BleManager.requestConnectionPriority(id, state === "active" ? 0 : 2).catch(() => {});
+  const power = AppState.addEventListener("change", pace);
+  if (AppState.currentState !== "active") pace("background");
   // one write at a time, each frame in one packet (the library splits at 20 bytes unless told the MTU)
   let writing: Promise<unknown> = Promise.resolve();
   return {
@@ -144,7 +226,9 @@ export async function connectEarbuds({ reuse = false } = {}): Promise<Transport>
     onDisconnect: (cb) => (onDrop = cb),
     close: async () => {
       subs.forEach((s) => s.remove());
+      power.remove();
       await BleManager.disconnect(id).catch(() => {});
+      onDrop(); // ignored by Shono when it closed the link on purpose (link.current is cleared first)
     },
   };
 }

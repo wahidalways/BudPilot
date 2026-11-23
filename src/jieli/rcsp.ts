@@ -7,6 +7,7 @@ export const OP = {
   getSysInfo: 0x07,
   setSysInfo: 0x08,
   sysInfoChanged: 0x09,
+  searchDev: 0x19, // find my earbuds: play the find sound (JieLi SearchDevCmd)
   setSettings: 0xc0,
   getSettings: 0xc1,
   advChanged: 0xc2,

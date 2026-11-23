@@ -240,9 +240,8 @@ export function eqChoices(b: BudPilot): Choice[] {
       on: my.playing?.id === e.id,
       onPress: () => (g.eqPlaying ? (my.pick(e.id), g.leaveGameEq(custom, e.gains)) : my.play(e)),
     })),
-    ...(unsaved || !my.list.length
-      ? [{ key: `eq-${custom}`, label: "Custom", on: unsaved, onPress: () => (g.eqPlaying ? g.leaveGameEq(custom, my.customCurve()) : my.playCustom()) }]
-      : []),
+    // "Custom" only while a curve that isn't saved plays (the user: no custom made by Shono; you make your own)
+    ...(unsaved ? [{ key: `eq-${custom}`, label: "Custom", on: true, onPress: () => (g.eqPlaying ? g.leaveGameEq(custom, my.customCurve()) : my.playCustom()) }] : []),
   ];
 }
 
@@ -452,7 +451,7 @@ export function ConnectState({ b }: { b: BudPilot }) {
               {waiting
                 ? b.pcLinked
                   ? "Connected to Windows, not answering Shono"
-                  : "In the case or out of range"
+                  : "In the case, or playing on another device"
                 : b.status === "connecting"
                   ? "Connecting…"
                   : "Shono isn't connected"}
@@ -464,7 +463,7 @@ export function ConnectState({ b }: { b: BudPilot }) {
         {waiting
           ? b.pcLinked
             ? "Sound isn't affected. Shono keeps trying by itself."
-            : "Open the case. Shono connects by itself."
+            : "Shono connects when they play on this PC."
           : "Open the case, then connect. Close other apps that control them first."}
       </Txt>
       {!waiting && (

@@ -13,13 +13,16 @@ export const HOCO_EQ35 = {
   /** The EQ mode Hoco's "Custom Equalizer" uses. */
   customEqMode: 9,
   /** Hoco's named presets: the exact mode and gains its app sends. The earbuds play their own stored curve for
-   * these modes and ignore the gains (checked on the earbuds), so only the mode really matters. */
+   * these modes and ignore the gains (checked on the earbuds), so only the mode really matters. Those gains don't
+   * match the names (Normal's lifts the bass 8 dB), so the curve Shono shows is `shape`: what each preset does, by
+   * its name (the user, 2026-11-24: Normal is flat, Bass Boost raises the bass, Bass Reduction lowers it). Within
+   * ±5 dB. */
   eqPresets: [
-    { name: "Normal", mode: 0, gains: [0, 8, 8, 4, 0, 0, 0, 0, 2, 2] },
-    { name: "Bass Boost", mode: 1, gains: [3, 1, 0, -2, -4, -4, -2, 0, 1, 2] },
-    { name: "Bass Reduction", mode: 2, gains: [-2, 0, 2, 4, -2, -2, 0, 0, 4, 4] },
-    { name: "Classic", mode: 3, gains: [0, 0, 0, 4, 4, 4, 0, 2, 3, 4] },
-  ] as { name: string; mode: number; gains?: number[] }[],
+    { name: "Normal", mode: 0, gains: [0, 8, 8, 4, 0, 0, 0, 0, 2, 2], shape: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { name: "Bass Boost", mode: 1, gains: [3, 1, 0, -2, -4, -4, -2, 0, 1, 2], shape: [5, 5, 4, 2, 0, 0, 0, 0, 0, 0] },
+    { name: "Bass Reduction", mode: 2, gains: [-2, 0, 2, 4, -2, -2, 0, 0, 4, 4], shape: [-5, -5, -4, -2, 0, 0, 0, 0, 0, 0] },
+    { name: "Classic", mode: 3, gains: [0, 0, 0, 4, 4, 4, 0, 2, 3, 4], shape: [3, 2, 1, 0, 0, 0, 0, 1, 2, 3] },
+  ] as { name: string; mode: number; gains?: number[]; shape: number[] }[],
   /** Noise-cancelling strengths, as a share of the earbuds' maximum: the lowest, middle and highest of the five
    * steps Hoco's app uses (cur = (n + 0.5) / 5 of max; its ANC button uses the highest). Checked on the earbuds. */
   ancLevels: [

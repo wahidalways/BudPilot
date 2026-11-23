@@ -232,6 +232,14 @@ export class Earbuds {
     if (!keys?.some((k) => k.ear === ear && k.taps === taps && k.fn === fn)) throw new Error("The earbuds didn't take that change. Try again.");
   }
 
+  /** Plays the find sound on `ears`, or stops it ("off"); the earbuds stop by themselves after `seconds`. The bytes
+   * hoco.music sends (h78.findDevice → JieLi SearchDevParam): type 1, op 1 play / 0 stop, seconds (2 bytes, high
+   * first), way 0 both / 1 left / 2 right, player 1 (the earbuds play it). */
+  async findSound(ears: "left" | "right" | "both" | "off", seconds = 60) {
+    const way = ears === "left" ? 1 : ears === "right" ? 2 : 0;
+    await this.client.request(OP.searchDev, [1, ears === "off" ? 0 : 1, (seconds >> 8) & 255, seconds & 255, way, 1]);
+  }
+
   /** The noise modes press and hold cycles through (JieLi ADV type 10, the anc_voice_key mask). */
   async setNoiseModes(mask: number) {
     await this.client.request(OP.setSettings, tlv(SETTING.noiseModeList, u32(mask)));
@@ -252,6 +260,8 @@ export class Earbuds {
   }
 
   private update(p: Partial<EarbudsState>) {
+    const keys = Object.keys(p) as (keyof EarbudsState)[];
+    if (keys.every((k) => JSON.stringify(p[k]) === JSON.stringify(this.state[k]))) return; // nothing new: no re-render
     this.state = { ...this.state, ...p };
     this.onChange(this.state);
   }

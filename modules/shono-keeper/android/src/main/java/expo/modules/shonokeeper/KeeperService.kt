@@ -20,11 +20,23 @@ class KeeperService : Service() {
       ShonoKeeperModule.stopPressed(this)
       return START_NOT_STICKY
     }
-    val notification = build(this, intent?.getStringExtra(EXTRA_TITLE) ?: "Shono", intent?.getStringExtra(EXTRA_TEXT) ?: "")
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-      startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
-    } else {
-      startForeground(NOTIFICATION_ID, notification)
+    intent?.getStringExtra(EXTRA_TITLE)?.let { title = it } // a refresh (no extras) keeps what it showed
+    intent?.getStringExtra(EXTRA_TEXT)?.let { text = it }
+    val notification = build(this, title, text)
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        // with Last seen on, also the location type: Android only lets a service read the location in the background
+        // with it, and refuses the type without the permission
+        val location = if (LastSeen.wanted(this)) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+        startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or location)
+      } else {
+        startForeground(NOTIFICATION_ID, notification)
+      }
+    } catch (e: Exception) {
+      // refused (a permission taken back meanwhile): no service rather than a crash
+      running = false
+      stopSelf()
+      return START_NOT_STICKY
     }
     running = true
     // not restarted by Android after it's killed: Shono starts it again when it opens and finds the earbuds
@@ -46,9 +58,18 @@ class KeeperService : Service() {
     /** True while the service is in the foreground; then its notification is updated in place (Android 12+ won't
      * let an app in the background start a foreground service again). */
     @Volatile var running = false
+    private var title = "Shono"
+    private var text = ""
 
     fun update(context: Context, title: String, text: String) {
+      this.title = title
+      this.text = text
       context.getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, build(context, title, text))
+    }
+
+    /** Re-applies the service's types (Last seen turned on or off) while Shono is in front, where Android allows it. */
+    fun refresh(context: Context) {
+      if (running) runCatching { context.startService(Intent(context, KeeperService::class.java)) }
     }
 
     fun build(context: Context, title: String, text: String): Notification {

@@ -6,15 +6,22 @@ import { Inter_500Medium } from "@expo-google-fonts/inter/500Medium";
 import { Inter_600SemiBold } from "@expo-google-fonts/inter/600SemiBold";
 import { Sora_600SemiBold } from "@expo-google-fonts/sora/600SemiBold";
 import { Sora_700Bold } from "@expo-google-fonts/sora/700Bold";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFonts } from "expo-font";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { MobileApp } from "@/mobile/shell";
 import { ThemeProvider } from "@/theme";
+import { setNativeTimers } from "@/utils/later";
+
+import { nativeLater } from "../modules/shono-keeper";
+
+setNativeTimers(nativeLater); // Shono's background work runs on Android's timers (utils/later.ts)
 
 /** Shono for Android phones and tablets. */
 export default function App() {
-  const [loaded, failed] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Sora_600SemiBold, Sora_700Bold });
+  // the tab icons' font too, so the bar never shows up empty for a moment
+  const [loaded, failed] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Sora_600SemiBold, Sora_700Bold, ...Ionicons.font });
   if (!loaded && !failed) return null; // bundled, so this is a moment; without it text would flash in a fallback font
   return (
     <SafeAreaProvider>

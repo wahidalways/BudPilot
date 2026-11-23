@@ -1,7 +1,9 @@
-import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
-import { Modal, PanResponder, Pressable, StyleSheet, View } from "react-native";
+import { type ComponentRef, type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
+import { Modal, PanResponder, Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
 import Animated, { Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withSpring, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import Ionicons from "@expo/vector-icons/Ionicons";
 
 import { useColors } from "@/theme";
 
@@ -42,8 +44,8 @@ export function Sheet({
       isOpen
         ? reduce
           ? withTiming(1, { duration: 1 })
-          : withSpring(1, { dampingRatio: 0.82, duration: 520 })
-        : withTiming(0, { duration: reduce ? 1 : 240, easing: Easing.in(Easing.cubic) }),
+          : withSpring(1, { dampingRatio: 0.8, duration: 400 })
+        : withTiming(0, { duration: reduce ? 1 : 190, easing: Easing.in(Easing.cubic) }),
     );
     if (!isOpen) {
       const t = setTimeout(() => setVisible(false), 260);
@@ -64,7 +66,7 @@ export function Sheet({
       onPanResponderMove: (_, g) => drag.set(g.dy > 0 ? g.dy : g.dy / 4),
       onPanResponderRelease: (_, g) => {
         if (g.dy > 90 || g.vy > 0.7) setDismissed((n) => n + 1);
-        else drag.set(withSpring(0, { dampingRatio: 0.8, duration: 380 }));
+        else drag.set(withSpring(0, { dampingRatio: 0.78, duration: 300 }));
       },
     }),
   );
@@ -109,6 +111,97 @@ export function Sheet({
   );
 }
 
+/** Where something is on screen (measureInWindow). */
+export type Anchor = { x: number; y: number; w: number; h: number };
+
+/** A small menu beside what was tapped (tablets): below it when there's room, otherwise above, kept on screen. Tap
+ * outside or press Back to close; it grows from the side it opens on, and stays while it fades away. Placed against
+ * its own window's corner, measured the same way as the anchor (Android may measure from below the status bar). */
+export function Popover({ anchor, label, onClose, width = 264, children }: { anchor?: Anchor; label: string; onClose: () => void; width?: number; children: ReactNode }) {
+  const c = useColors();
+  const reduce = useReducedMotion();
+  const { width: W, height: H } = useWindowDimensions();
+  const [shown, setShown] = useState(anchor); // the last place, kept while it closes
+  if (anchor && anchor !== shown) setShown(anchor);
+  const open = !!anchor;
+  const root = useRef<ComponentRef<typeof View>>(null);
+  const [origin, setOrigin] = useState<{ x: number; y: number }>();
+  const [h, setH] = useState(0);
+  const p = useSharedValue(0);
+  useEffect(() => {
+    p.set(reduce ? (open ? 1 : 0) : open ? withSpring(1, { dampingRatio: 0.82, duration: 280 }) : withTiming(0, { duration: 130 }));
+    if (open) return;
+    const t = setTimeout(() => setShown(undefined), reduce ? 0 : 150);
+    return () => clearTimeout(t);
+  }, [open, reduce, p]);
+  const grow = useAnimatedStyle(() => ({ opacity: p.get(), transform: [{ scale: 0.94 + p.get() * 0.06 }] }));
+  if (!shown) return null;
+  // below what was tapped if it fits; otherwise beside it (left, then right), centred on it; otherwise above
+  const ax = shown.x - (origin?.x ?? 0);
+  const ay = shown.y - (origin?.y ?? 0);
+  const below = ay + shown.h + 6;
+  const fitsBelow = !h || below + h <= H - 12;
+  const side = fitsBelow ? undefined : ax - width - 8 >= 12 ? ax - width - 8 : ax + shown.w + 8 + width <= W - 12 ? ax + shown.w + 8 : undefined;
+  const up = !fitsBelow && side === undefined;
+  const top = fitsBelow ? below : up ? Math.max(12, ay - h - 6) : Math.min(Math.max(12, ay + shown.h / 2 - h / 2), H - h - 12);
+  const left = side ?? Math.min(Math.max(12, ax), W - width - 12);
+  return (
+    <Modal transparent visible animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
+      <View
+        ref={root}
+        collapsable={false}
+        style={StyleSheet.absoluteFill}
+        pointerEvents={open ? "auto" : "none"}
+        onLayout={() => root.current?.measureInWindow((x, y) => setOrigin({ x, y }))}
+      >
+        <Pressable style={StyleSheet.absoluteFill} accessibilityLabel="Close" onPress={onClose} />
+        <Animated.View
+          accessibilityViewIsModal
+          accessibilityLabel={label}
+          onLayout={(e) => setH(e.nativeEvent.layout.height)}
+          style={[
+            s.pop,
+            { left, top, width, backgroundColor: c.dark ? c.raised : c.surface, borderColor: c.hair, transformOrigin: fitsBelow ? "top" : up ? "bottom" : side! < ax ? "right" : "left" },
+            origin ? grow : s.hidden,
+          ]}
+        >
+          {children}
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+/** Where `target` (what was tapped: an event's currentTarget) is, for a Popover beside it; false where it can't be
+ * measured (then open something else, a sheet). */
+export function measureAnchor(target: unknown, done: (a: Anchor) => void): boolean {
+  const t = target as { measureInWindow?: (cb: (x: number, y: number, w: number, h: number) => void) => void } | null | undefined;
+  if (typeof t?.measureInWindow !== "function") return false;
+  t.measureInWindow((x, y, w, h) => done({ x, y, w, h }));
+  return true;
+}
+
+/** A row in a Popover: an icon, its label, and a tick on the current choice (`on`; a choice is a radio, an action a
+ * button). `danger`: Delete. */
+export function MenuRow({ label, icon, on, danger, onPress }: { label: string; icon?: ReactNode; on?: boolean; danger?: boolean; onPress: () => void }) {
+  const c = useColors();
+  const color = danger ? c.danger : on ? c.signalInk : c.ink;
+  return (
+    <Pressable
+      accessibilityRole={on === undefined ? "button" : "radio"}
+      accessibilityState={on === undefined ? undefined : { selected: on }}
+      onPress={onPress}
+      style={({ pressed }) => [s.menuRow, (on || pressed) && { backgroundColor: on ? c.tint : c.well }]}
+    >
+      {icon}
+      <Txt v="strong" numberOfLines={1} style={[s.grow, { color }]}>
+        {label}
+      </Txt>
+      {on && <Ionicons name="checkmark" size={18} color={c.signalInk} />}
+    </Pressable>
+  );
+}
+
 /** A short note that drops in from the top, then leaves by itself. */
 export function Toast({ note }: { note: { title: string; sub: string; at: number } | undefined }) {
   const c = useColors();
@@ -120,8 +213,8 @@ export function Toast({ note }: { note: { title: string; sub: string; at: number
   const p = useSharedValue(0);
   useEffect(() => {
     if (at === undefined) return;
-    p.set(reduce ? 1 : withSpring(1, { dampingRatio: 0.7, duration: 600 }));
-    const t = setTimeout(() => p.set(withTiming(0, { duration: 260 })), 2800);
+    p.set(reduce ? 1 : withSpring(1, { dampingRatio: 0.66, duration: 460 }));
+    const t = setTimeout(() => p.set(withTiming(0, { duration: 200 })), 2800);
     return () => clearTimeout(t);
   }, [at, reduce, p]);
   const a = useAnimatedStyle(() => ({ opacity: Math.min(1, p.get() * 1.6), transform: [{ translateY: (p.get() - 1) * 90 }, { scale: 0.9 + p.get() * 0.1 }] }));
@@ -146,5 +239,9 @@ const s = StyleSheet.create({
   title: { fontSize: 19, lineHeight: 25 },
   sub: { marginTop: 4, fontSize: 13.5 },
   body: { paddingHorizontal: 22, paddingTop: 10, flexShrink: 1 },
+  pop: { position: "absolute", padding: 6, borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, boxShadow: "0 16px 40px rgba(0,0,0,0.3)" },
+  hidden: { opacity: 0 },
+  menuRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 46, paddingHorizontal: 12, borderRadius: 12 },
+  grow: { flex: 1, minWidth: 0 },
   toast: { position: "absolute", alignSelf: "center", paddingVertical: 10, paddingHorizontal: 18, borderRadius: 22, alignItems: "center", boxShadow: "0 10px 30px rgba(0,0,0,0.25)" },
 });
