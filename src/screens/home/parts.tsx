@@ -1,16 +1,16 @@
 // Pieces both views share: the tray flyout and the settings window.
 import { useEffect, useRef, useState } from "react";
-import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
-import Animated, { cubicBezier, useReducedMotion } from "react-native-reanimated";
+import { Image, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { HOCO_EQ35 as P } from "@/devices/hoco-eq35";
 import { ANC_LEVELS } from "@/hooks/use-adaptive-anc";
-import type { NoisePref } from "@/hooks/use-earbuds";
+import { ancOn, type NoisePref } from "@/hooks/use-earbuds";
 import { canDetectGames } from "@/hooks/use-game-mode";
+import { GAME_EQ_NAME } from "@/utils/game";
 import type { Battery as BatteryLevel } from "@/jieli/earbuds";
 import { F, useColors } from "@/theme";
 import { BoltIcon, BudIcon, ChevronIcon, GitHubLogo, NoiseIcon, XLogo } from "@/ui/icons";
-import { Button, Card, Dot, Pill, pillLook, Seg, Switch, Tile, ToggleRow, Txt } from "@/ui/kit";
+import { Button, Card, controlStyle, css, Dot, Pill, pillLook, Seg, Switch, Tile, Txt } from "@/ui/kit";
 import { nearestIndex } from "@/utils/adaptive-anc";
 import { type Correction, seconds } from "@/utils/corrections";
 
@@ -18,7 +18,7 @@ import { type BudPilot, modeName } from "./use-bud-pilot";
 
 const levelName = (level: number) => P.ancLevels[nearestIndex(level, ANC_LEVELS)]?.name ?? "";
 
-/** What BudPilot is holding, in a few words: "Off", "ANC Mid", "ANC Adaptive". */
+/** What Shono is holding, in a few words: "Off", "ANC Mid", "ANC Adaptive". */
 export const keepText = (p: NoisePref) => (p.mode === 1 ? `ANC ${p.adaptive ? "Adaptive" : levelName(p.ncLevel)}` : modeName(p.mode));
 
 export const batteryLine = (b: BudPilot) => {
@@ -64,32 +64,54 @@ export function KeepChip({ b }: { b: BudPilot }) {
   );
 }
 
-function Battery({ label, level }: { label: string; level: BatteryLevel }) {
+type Photo = { uri: string; aspect: number };
+
+/** One battery: its photo over a soft shadow, the name (⚡ while charging), the percent, and a battery-shaped bar (green charging, amber
+ * at 20 % or less, red at 10 % or less). */
+function Battery({ label, level, photo, onPhotoError }: { label: string; level: BatteryLevel; photo?: Photo; onPhotoError?: () => void }) {
   const c = useColors();
+  const pct = level?.percent ?? 0;
+  const tone = !level ? c.ink2 : level.charging ? c.ok : pct <= 10 ? c.danger : pct <= 20 ? c.warn : c.ink;
+  const fill = !level ? c.ink2 : level.charging ? c.ok : pct <= 10 ? c.danger : pct <= 20 ? c.warn : c.signal;
   return (
     <View
       style={s.battery}
       accessible
       accessibilityLabel={`${label} battery ${level ? `${level.percent} percent${level.charging ? ", charging" : ""}` : "not available"}`}
     >
+      {photo && (
+        <View style={s.photoBox}>
+          <View style={[s.shadow, { backgroundColor: c.ink }, !level && s.photoGone]} />
+          <Image source={{ uri: photo.uri }} onError={onPhotoError} resizeMode="contain" style={[s.photo, { aspectRatio: photo.aspect }, !level && s.photoGone]} />
+        </View>
+      )}
       <View style={s.inline}>
         <Txt v="sub" style={s.batteryLabel}>
           {label}
         </Txt>
         {level?.charging && <BoltIcon color={c.ok} />}
       </View>
-      <Txt v="num">{level ? `${level.percent}%` : "—"}</Txt>
-      <View style={[s.meter, { backgroundColor: c.well }]}>
-        <View style={[s.meterFill, { width: `${level?.percent ?? 0}%`, backgroundColor: level?.charging ? c.ok : c.ink2 }]} />
+      <Text style={[s.pct, { color: tone }]}>
+        {level ? level.percent : "—"}
+        {level && <Text style={[s.pctSign, { color: c.ink2 }]}>%</Text>}
+      </Text>
+      <View style={s.cell}>
+        <View style={[s.cellBody, { backgroundColor: c.well }]}>
+          <View style={[s.cellFill, { width: `${pct}%`, backgroundColor: fill }]} />
+        </View>
+        <View style={[s.cellCap, { backgroundColor: c.well }]} />
       </View>
     </View>
   );
 }
 
-/** Name, connection, and the three batteries, in one card. */
+/** Name, connection, and the three batteries, in one card, each under its photo when this computer has the photos. */
 export function DeviceCard({ b }: { b: BudPilot }) {
   const c = useColors();
   const bat = b.state!.battery;
+  const [photos, setPhotos] = useState(true); // off once one fails to load (not on this computer)
+  const photo = (key: keyof typeof P.photos) => (photos ? P.photos[key] : undefined);
+  const noPhotos = () => setPhotos(false);
   return (
     <Card style={s.device}>
       <View style={s.between}>
@@ -102,9 +124,9 @@ export function DeviceCard({ b }: { b: BudPilot }) {
         </View>
       </View>
       <View style={s.batteries}>
-        <Battery label="Left" level={bat.left} />
-        <Battery label="Right" level={bat.right} />
-        <Battery label="Case" level={bat.case} />
+        <Battery label="Left" level={bat.left} photo={photo("left")} onPhotoError={noPhotos} />
+        <Battery label="Right" level={bat.right} photo={photo("right")} onPhotoError={noPhotos} />
+        <Battery label="Case" level={bat.case} photo={photo("case")} onPhotoError={noPhotos} />
       </View>
     </Card>
   );
@@ -155,7 +177,7 @@ export function NoiseControl({ b, big }: { b: BudPilot; big?: boolean }) {
               testID={`anc-${m}`}
               big
               on={state.anc === m}
-              onPress={() => choose({ mode: m, ncLevel, adaptive })}
+              onPress={() => choose(m === 1 ? ancOn() : { mode: m, ncLevel, adaptive })}
               label={modeName(m)}
               sub={MODE_SUBS[m]}
             />
@@ -168,7 +190,7 @@ export function NoiseControl({ b, big }: { b: BudPilot; big?: boolean }) {
           accent
           options={modes.map((m) => ({ value: m, label: modeName(m), icon: (color: string) => <NoiseIcon mode={m} color={color} size={22} /> }))}
           value={state.anc}
-          onChange={(m) => choose({ mode: m, ncLevel, adaptive })}
+          onChange={(m) => choose(m === 1 ? ancOn() : { mode: m, ncLevel, adaptive })}
         />
       )}
       {big && strength}
@@ -181,14 +203,19 @@ export function NoiseControl({ b, big }: { b: BudPilot; big?: boolean }) {
   );
 }
 
-/** Hoco's EQ presets, then Custom. While Game mode plays the Footsteps EQ, it takes Custom's place (it borrows the
- * Custom slot, so showing "Custom" would be wrong) and the row keeps its size; picking a preset leaves Footsteps. */
-export function EqPills({ b, gains }: { b: BudPilot; gains?: number[] }) {
+/** Hoco's EQ presets, the user's saved EQs, then Custom: only while nothing is saved, or while the earbuds play a curve
+ * that isn't saved (so the chosen pill always matches what plays). The gaming EQ isn't a pill (its chip sits beside
+ * the Game mode switch); picking an EQ here while it plays turns it off and plays the pick. `onNew`: a "+ New" pill. */
+export function EqPills({ b, onNew }: { b: BudPilot; onNew?: () => void }) {
   const state = b.state!;
-  const footsteps = b.game.footsteps;
+  const g = b.game;
+  const my = b.myEqs;
+  const custom = P.customEqMode;
   const flat = () => P.eqBands.map(() => 0);
   const stored = (mode: number) => state.eqPresets.find((p) => p.mode === mode)?.gains;
-  const set = (mode: number, g: number[]) => (footsteps ? b.game.leaveFootsteps(mode) : void b.run((e) => e.setEq(mode, g))());
+  // `curve`: for the Custom slot (saved EQs, Custom)
+  const play = (mode: number, gains: number[], curve?: number[]) => (g.eqPlaying ? g.leaveGameEq(mode, curve) : void b.setEq(mode, gains));
+  const unsaved = state.eqMode === custom && !my.playing && !g.builtIn; // a Custom curve that isn't a saved EQ
   return (
     <View style={s.pills} accessibilityRole="radiogroup" aria-label="Equalizer">
       {P.eqPresets.map((p) => (
@@ -196,25 +223,32 @@ export function EqPills({ b, gains }: { b: BudPilot; gains?: number[] }) {
           key={p.name}
           testID={`eq-${p.mode}`}
           label={p.name}
-          on={!footsteps && state.eqMode === p.mode}
-          onPress={() => set(p.mode, p.gains ?? stored(p.mode) ?? flat())}
+          on={!g.builtIn && state.eqMode === p.mode}
+          onPress={() => play(p.mode, p.gains ?? stored(p.mode) ?? flat())}
         />
       ))}
-      {footsteps ? (
-        <Pill testID="eq-footsteps" label="Footsteps" on onPress={() => {}} />
-      ) : (
+      {my.list.map((e) => (
         <Pill
-          testID={`eq-${P.customEqMode}`}
+          key={e.id}
+          testID={`eq-my-${e.id}`}
+          label={e.name}
+          on={my.playing?.id === e.id}
+          onPress={() => (g.eqPlaying ? (my.pick(e.id), g.leaveGameEq(custom, e.gains)) : my.play(e))}
+        />
+      ))}
+      {(unsaved || !my.list.length) && (
+        <Pill
+          testID={`eq-${custom}`}
           label="Custom"
-          on={state.eqMode === P.customEqMode}
-          onPress={() => set(P.customEqMode, gains ?? stored(P.customEqMode) ?? flat())}
+          on={unsaved}
+          onPress={() => (g.eqPlaying ? g.leaveGameEq(custom, my.customCurve()) : my.playCustom())}
         />
       )}
+      {onNew && <Pill testID="eq-new" label="+ New" on={false} button onPress={onNew} />}
     </View>
   );
 }
 
-const STREAK_EASE = cubicBezier(0.3, 0.6, 0.2, 1);
 const STREAKS = [
   { y: 16, w: 0.55, d: 0, t: 3 },
   { y: 34, w: 0.38, d: 60, t: 1.5 },
@@ -225,78 +259,85 @@ const STREAKS = [
   { y: 74, w: 0.34, d: 340, t: 1.5 },
 ];
 
+// Each streak is `w` of the row long and runs from just off its left edge to past its right one: in its own width,
+// -110% to 115/w %. Invisible at rest, so with animations off (Windows' "Animation effects") nothing shows.
+const streak = StyleSheet.create(
+  Object.fromEntries(
+    STREAKS.map((k, i) => [
+      i,
+      css({
+        position: "absolute",
+        left: 0,
+        top: `${k.y}%`,
+        width: `${k.w * 100}%`,
+        height: k.t,
+        borderRadius: 2,
+        opacity: 0,
+        animationKeyframes: [{ "0%": { transform: "translateX(-110%)", opacity: 0 }, "20%": { opacity: 0.9 }, "100%": { transform: `translateX(${115 / k.w}%)`, opacity: 0 } }],
+        animationDuration: "550ms",
+        animationDelay: `${k.d}ms`,
+        animationTimingFunction: "cubic-bezier(0.3, 0.6, 0.2, 1)",
+        animationFillMode: "both",
+      }),
+    ]),
+  ),
+);
+
 /** The launch: speed streaks race across the row once. */
-function Streaks({ width, color }: { width: number; color: string }) {
+function Streaks({ color }: { color: string }) {
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      {STREAKS.map((k, i) => {
-        const len = width * k.w;
-        return (
-          <Animated.View
-            key={i}
-            style={{
-              position: "absolute",
-              left: 0,
-              top: `${k.y}%`,
-              width: len,
-              height: k.t,
-              borderRadius: 2,
-              backgroundColor: color,
-              animationName: {
-                from: { transform: [{ translateX: -len * 1.1 }], opacity: 0 },
-                "20%": { opacity: 0.9 },
-                to: { transform: [{ translateX: width * 1.15 }], opacity: 0 },
-              },
-              animationDuration: 550,
-              animationDelay: k.d,
-              animationTimingFunction: STREAK_EASE,
-              animationFillMode: "both",
-            }}
-          />
-        );
-      })}
-    </View>
-  );
-}
-
-/** ››› next to "Game mode" while it's on, pulsing like a turbo light (still when motion is reduced). */
-function Turbo({ still }: { still: boolean }) {
-  const c = useColors();
-  return (
-    <View style={s.turbo} accessible={false}>
-      {[0, 150, 300].map((d) => (
-        <Animated.View
-          key={d}
-          style={
-            !still && {
-              animationName: { "0%": { opacity: 0.25 }, "40%": { opacity: 1 }, "100%": { opacity: 0.25 } },
-              animationDuration: 1200,
-              animationDelay: d,
-              animationIterationCount: "infinite",
-              animationTimingFunction: "ease-in-out",
-            }
-          }
-        >
-          <ChevronIcon color={c.signalInk} />
-        </Animated.View>
+      {STREAKS.map((_, i) => (
+        <View key={i} style={[streak[i], { backgroundColor: color }]} />
       ))}
     </View>
   );
 }
 
-/** The Game mode switch; turning it on (by hand or by a full-screen game) launches with a short speed burst.
- * `footsteps`: the flyout's small Footsteps EQ toggle beside the switch while Game mode is on, so no row is added. */
-export function GameRow({ b, footsteps }: { b: BudPilot; footsteps?: boolean }) {
+// one chevron of the turbo light: pulses 3 times, a beat after the one before
+const pulse = StyleSheet.create(
+  Object.fromEntries(
+    [0, 150, 300].map((d, i) => [
+      i,
+      css({
+        animationKeyframes: [{ "0%": { opacity: 1 }, "50%": { opacity: 0.25 }, "100%": { opacity: 1 } }],
+        animationDuration: "1200ms",
+        animationDelay: `${d}ms`,
+        animationIterationCount: 3,
+        animationTimingFunction: "ease-in-out",
+      }),
+    ]),
+  ),
+);
+
+/** ››› next to "Game mode" while it's on: pulses a few times like a turbo light, then stays lit. Never endless:
+ * Shono keeps running hidden in the tray, and an endless animation kept the GPU drawing 60 frames a second there
+ * (20% of a core). */
+function Turbo() {
   const c = useColors();
-  const still = useReducedMotion();
-  const { active: on, byGame, prefs, setOn } = b.game;
+  return (
+    <View style={s.turbo} accessible={false}>
+      {[0, 1, 2].map((i) => (
+        <View key={i} style={pulse[i]}>
+          <ChevronIcon color={c.signalInk} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/** The Game mode switch; turning it on (by hand or by a full-screen game) launches with a short speed burst. `chip`:
+ * the flyout's gaming EQ toggle beside the switch while Game mode is on, named after the EQ it plays (the built-in
+ * Game EQ unless Settings chose another), so no row is added. */
+export function GameRow({ b, chip }: { b: BudPilot; chip?: boolean }) {
+  const c = useColors();
+  const { active: on, byGame, prefs, setOn, gameEqName, setEqOn } = b.game;
   const [burst, setBurst] = useState(0);
-  const [width, setWidth] = useState(0);
   const was = useRef(on);
   useEffect(() => {
-    if (on && !was.current && !still) setBurst((n) => n + 1);
+    if (on && !was.current) setBurst((n) => n + 1);
     was.current = on;
-  }, [on, still]);
+  }, [on]);
   const status = byGame
     ? "On while full screen"
     : prefs.manual
@@ -306,29 +347,31 @@ export function GameRow({ b, footsteps }: { b: BudPilot; footsteps?: boolean }) 
         : "Lowest audio delay, for games and videos";
 
   return (
-    <View style={s.gameRow} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
-      {burst > 0 && width > 0 && <Streaks key={burst} width={width} color={c.signal} />}
+    <View style={s.gameRow}>
+      {burst > 0 && <Streaks key={burst} color={c.signal} />}
       <View style={s.row}>
         <View style={s.grow}>
           <View style={s.inline}>
             <Txt v="title">Game mode</Txt>
-            {on && <Turbo still={still} />}
+            {on && <Turbo />}
           </View>
           <Txt v="sub" numberOfLines={1}>
             {status}
           </Txt>
         </View>
-        {footsteps && on && (
+        {chip && on && (
           <Pressable
-            testID="footsteps"
+            testID="game-eq"
             accessibilityRole="switch"
-            aria-checked={prefs.eq}
-            accessibilityLabel="Footsteps EQ: less boom, clearer footsteps"
-            onPress={() => b.game.update({ eq: !prefs.eq })}
+            aria-checked={prefs.eqOn}
+            accessibilityLabel={`${gameEqName} while gaming`}
+            onPress={() => setEqOn(!prefs.eqOn)}
             hitSlop={6}
-            style={({ pressed }) => [s.chip, s.footstepsChip, pillLook(c, prefs.eq), pressed && s.pressed]}
+            style={(state) => [s.chip, s.gameEqChip, controlStyle((hover) => pillLook(c, prefs.eqOn, hover))(state)]}
           >
-            <Text style={[s.chipText, prefs.eq && s.chipStrong, { color: prefs.eq ? c.onInk : c.ink }]}>Footsteps EQ</Text>
+            <Text numberOfLines={1} style={[s.chipText, prefs.eqOn && s.chipStrong, { color: prefs.eqOn ? c.onInk : c.ink }]}>
+              {gameEqName}
+            </Text>
           </Pressable>
         )}
         <Switch testID="game" value={on} onChange={setOn} label="Game mode" />
@@ -351,16 +394,24 @@ export function ErrorNote({ b }: { b: BudPilot }) {
   );
 }
 
-/** Footsteps EQ on/off: Game mode plays it while it's on. */
-export function FootstepsToggle({ b }: { b: BudPilot }) {
+/** Which EQ the gaming EQ plays, for Settings: the built-in Game EQ, a preset or a saved EQ. */
+export function GameEqPicker({ b }: { b: BudPilot }) {
+  const { choice, setGameEq } = b.game;
   return (
-    <ToggleRow
-      testID="footsteps"
-      title="Footsteps EQ"
-      detail="Less boom, clearer footsteps. Your EQ comes back after."
-      value={b.game.prefs.eq}
-      onChange={(eq) => b.game.update({ eq })}
-    />
+    <View style={s.pills} accessibilityRole="radiogroup" aria-label="Gaming EQ plays">
+      <Pill testID="game-eq-builtin" label={GAME_EQ_NAME} on={choice.kind === "builtin"} onPress={() => setGameEq({ kind: "builtin" })} />
+      {P.eqPresets.map((p) => (
+        <Pill
+          key={p.name}
+          label={p.name}
+          on={choice.kind === "preset" && choice.mode === p.mode}
+          onPress={() => setGameEq({ kind: "preset", mode: p.mode })}
+        />
+      ))}
+      {b.myEqs.list.map((e) => (
+        <Pill key={e.id} label={e.name} on={choice.kind === "mine" && choice.id === e.id} onPress={() => setGameEq({ kind: "mine", id: e.id })} />
+      ))}
+    </View>
   );
 }
 
@@ -381,11 +432,11 @@ export function ConnectState({ b }: { b: BudPilot }) {
             <Txt v="sub">
               {waiting
                 ? b.pcLinked
-                  ? "Connected to Windows, not answering BudPilot"
+                  ? "Connected to Windows, not answering Shono"
                   : "In the case or out of range"
                 : b.status === "connecting"
                   ? "Connecting…"
-                  : "BudPilot isn't connected"}
+                  : "Shono isn't connected"}
             </Txt>
           </View>
         </View>
@@ -393,8 +444,8 @@ export function ConnectState({ b }: { b: BudPilot }) {
       <Txt v="small" muted>
         {waiting
           ? b.pcLinked
-            ? "Sound isn't affected. BudPilot keeps trying by itself."
-            : "Open the case. BudPilot connects by itself."
+            ? "Sound isn't affected. Shono keeps trying by itself."
+            : "Open the case. Shono connects by itself."
           : "Open the case, then connect. Close other apps that control them first."}
       </Txt>
       {!waiting && (
@@ -436,7 +487,7 @@ export function Credit() {
           accessibilityLabel={label}
           accessibilityHint="Opens in your browser"
           onPress={() => void Linking.openURL(url).catch(() => undefined)} // no browser is rare; nothing useful to show
-          style={({ pressed }) => [s.creditChip, { backgroundColor: c.card, borderColor: c.stroke, boxShadow: `${c.shine}, ${c.drop}` }, pressed && s.pressed]}
+          style={(state) => [s.creditChip, controlStyle((hover) => ({ backgroundColor: hover ? c.hover : c.card, borderColor: c.stroke, boxShadow: `${c.shine}, ${c.drop}` }))(state)]}
         >
           <Logo color={c.ink} />
         </Pressable>
@@ -450,21 +501,40 @@ const s = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", gap: 12 },
   inline: { flexDirection: "row", alignItems: "center", gap: 6 },
   between: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  pressed: { transform: [{ scale: 0.94 }] },
-  chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, flexShrink: 1, minWidth: 0 },
+  chip: css({
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    flexShrink: 1,
+    minWidth: 0,
+    transitionProperty: "background-color",
+    transitionDuration: "300ms",
+  }),
   chipText: { fontFamily: F.regular, fontSize: 12, lineHeight: 16 },
   chipStrong: { fontFamily: F.semibold },
+  gameEqChip: { borderWidth: 1, flexShrink: 1, maxWidth: 130 },
   device: { paddingVertical: 12, paddingHorizontal: 14, gap: 10 },
   batteries: { flexDirection: "row", gap: 14 },
-  battery: { flex: 1, gap: 4 },
+  battery: { flex: 1, gap: 3 },
+  photoBox: { height: 62, alignItems: "center", justifyContent: "flex-start", marginBottom: 2 },
+  photo: { height: 54 },
+  // a soft oval under the photo, as if it stood on the card
+  shadow: { position: "absolute", bottom: 1, width: 30, height: 4, borderRadius: 999, opacity: 0.16, filter: "blur(2px)" },
+  photoGone: { opacity: 0.3 },
+  pct: { fontFamily: F.semibold, fontSize: 20, lineHeight: 24, fontVariant: ["tabular-nums"], letterSpacing: -0.3 },
+  pctSign: { fontFamily: F.medium, fontSize: 12 },
+  cell: { flexDirection: "row", alignItems: "center", gap: 2, marginTop: 2 },
+  cellBody: { flex: 1, height: 8, borderRadius: 4, overflow: "hidden" },
+  cellFill: css({ height: "100%", borderRadius: 4, transitionProperty: "width", transitionDuration: "700ms", transitionTimingFunction: "ease-out" }),
+  cellCap: { width: 3, height: 4, borderRadius: 1.5 },
   batteryLabel: { fontSize: 11 },
-  meter: { height: 4, borderRadius: 2, overflow: "hidden" },
-  meterFill: { height: "100%", borderRadius: 2 },
   noise: { gap: 10 },
   noiseHead: { flexDirection: "row", alignItems: "center", gap: 8, height: 28 }, // 28: the small strength control
   tiles: { flexDirection: "row", gap: 8 },
   pills: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  footstepsChip: { borderWidth: 1, flexShrink: 0 },
   error: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 },
   turbo: { flexDirection: "row", alignItems: "center", gap: 1, marginLeft: 2 },
   gameRow: { overflow: "hidden", borderRadius: 14, paddingVertical: 6, paddingHorizontal: 12, marginHorizontal: -12, marginVertical: -6 },

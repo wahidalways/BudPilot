@@ -43,7 +43,7 @@ export class RcspClient {
   /** Sends a custom (0xFF) command, only for payloads on the allow list. */
   custom(data: number[], ms = 3000): Promise<Uint8Array> {
     if (!ALLOWED_CUSTOM.some((p) => p.every((b, i) => data[i] === b))) {
-      return Promise.reject(new Error("That custom command isn't on BudPilot's allow list."));
+      return Promise.reject(new Error("That custom command isn't on Shono's allow list."));
     }
     return this.send(OP.custom, data, ms);
   }

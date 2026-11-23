@@ -23,7 +23,7 @@ export function Flyout({ b }: { b: BudPilot }) {
       <Rim />
       <View style={s.top}>
         <Mark />
-        <Txt v="brand">BudPilot</Txt>
+        <Txt v="brand">Shono</Txt>
         <View style={s.chipSlot}>{connected && <KeepChip b={b} />}</View>
         <IconButton label="All settings" onPress={openSettings}>
           <GearIcon color={c.ink2} />
@@ -39,7 +39,7 @@ export function Flyout({ b }: { b: BudPilot }) {
             <Txt v="label">Sound</Txt>
             <EqPills b={b} />
           </View>
-          <GameRow b={b} footsteps />
+          <GameRow b={b} chip />
         </>
       ) : (
         <ConnectState b={b} />

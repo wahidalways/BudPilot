@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { HOCO_EQ35 as P } from "@/devices/hoco-eq35";
 import { F, useColors } from "@/theme";
 import { BudIcon, FnIcon } from "@/ui/icons";
-import { Card, Txt } from "@/ui/kit";
+import { Card, controlStyle, ToggleRow, Txt } from "@/ui/kit";
 
 import { PanelHead } from "./panels";
 import type { BudPilot } from "./use-bud-pilot";
@@ -107,11 +107,12 @@ export function TouchPanel({ b }: { b: BudPilot }) {
                     // a quicker second pick is its own save: only clear the label if it's still this one
                     void b.run((e) => e.setKey(ed.ear, ed.taps, f.fn))().finally(() => setSaving((s) => (s === mine ? undefined : s)));
                   }}
-                  style={({ pressed }) => [
+                  style={(state) => [
                     s.fn,
-                    on ? { backgroundColor: c.tint, borderColor: c.tintEdge } : { backgroundColor: c.card, borderColor: c.stroke },
-                    { boxShadow: `${c.shine}, ${c.drop}` },
-                    pressed && s.pressed,
+                    controlStyle((hover) => ({
+                      ...(on ? { backgroundColor: c.tint, borderColor: c.tintEdge } : { backgroundColor: hover ? c.hover : c.card, borderColor: c.stroke }),
+                      boxShadow: `${c.shine}, ${c.drop}`,
+                    }))(state),
                   ]}
                 >
                   <FnIcon fn={f.fn} color={on ? c.signalInk : c.ink2} size={20} />
@@ -142,13 +143,23 @@ export function TouchPanel({ b }: { b: BudPilot }) {
           <Txt v="small">Double tap hangs up</Txt>
         </View>
       </View>
+      {b.volumeTaps.available && (
+        <Card>
+          <ToggleRow
+            testID="volume-taps"
+            title="Volume taps move Windows' volume"
+            detail="Off: they only change the earbuds' own loudness, and Windows' slider stays put."
+            value={b.volumeTaps.on}
+            onChange={b.volumeTaps.setOn}
+          />
+        </Card>
+      )}
     </>
   );
 }
 
 const s = StyleSheet.create({
   grow: { flex: 1, minWidth: 0 },
-  pressed: { transform: [{ scale: 0.96 }] },
   ears: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   ear: { flexGrow: 1, flexBasis: 260, padding: 12, gap: 2 },
   earHead: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 4, paddingBottom: 8 },
@@ -167,5 +178,4 @@ const s = StyleSheet.create({
   calls: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 18, rowGap: 6, borderWidth: 1, borderStyle: "dashed", borderRadius: 14, padding: 14 },
   callsTitle: { fontSize: 13 },
   call: { flexDirection: "row", alignItems: "center", gap: 2 },
-  callsNote: { width: "100%" },
 });

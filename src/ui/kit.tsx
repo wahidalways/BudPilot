@@ -1,7 +1,16 @@
 // The redesign's building blocks: glass cards and controls, the type scale, the switch.
 import { type ReactNode, useState } from "react";
-import { Pressable, type StyleProp, StyleSheet, Text, type TextProps, View, type ViewStyle } from "react-native";
-import Animated, { cubicBezier } from "react-native-reanimated";
+import {
+  Pressable,
+  type PressableStateCallbackType,
+  type StyleProp,
+  StyleSheet,
+  Text,
+  TextInput,
+  type TextProps,
+  View,
+  type ViewStyle,
+} from "react-native";
 
 import { type Colors, F, useColors } from "@/theme";
 
@@ -26,11 +35,35 @@ export function Txt({ v = "body", muted, style, ...rest }: TextProps & { v?: key
   return <Text {...rest} style={[type[v], { color: quiet ? c.ink2 : c.ink }, style]} />;
 }
 
-const pressedStyle = { transform: [{ scale: 0.96 }] };
-const glassControl = (c: Colors) => ({ backgroundColor: c.card, borderColor: c.stroke, boxShadow: `${c.shine}, ${c.drop}` });
-/** A pill's fill: the accent when chosen, glass otherwise. */
-export const pillLook = (c: Colors, on: boolean) =>
-  on ? { backgroundColor: c.onBg, borderColor: c.onEdge, boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.3), ${c.drop}` } : glassControl(c);
+// Motion. All of it is CSS (react-native-web passes these styles through): the browser runs it on its compositor,
+// with no animation library and no JavaScript per frame. Windows' "Animation effects" off turns it all off (app.tsx).
+export const GLIDE = "cubic-bezier(0.25, 0.8, 0.25, 1)"; // eases out, no overshoot
+const SPRING = "cubic-bezier(0.34, 1.45, 0.64, 1)"; // a release: a little past, then back
+/** Web-only style keys (transitions, keyframes): React Native's types don't know them. */
+export const css = (style: Record<string, unknown>) => style as ViewStyle;
+export const motion = StyleSheet.create({
+  // a control: a press sinks fast, the release springs back, and its colors fade between states
+  control: css({
+    transitionProperty: "transform, background-color, border-color, box-shadow",
+    transitionDuration: "260ms, 160ms, 160ms, 160ms",
+    transitionTimingFunction: `${SPRING}, ease, ease, ease`,
+  }),
+  pressed: css({ transform: [{ scale: 0.96 }], transitionDuration: "90ms, 160ms, 160ms, 160ms", transitionTimingFunction: "ease-out" }),
+});
+
+/** Hover is web-only, so React Native's state type doesn't have it. */
+export const hovered = (state: PressableStateCallbackType) => !!(state as { hovered?: boolean }).hovered;
+
+const glassControl = (c: Colors, hover = false) => ({ backgroundColor: hover ? c.hover : c.card, borderColor: c.stroke, boxShadow: `${c.shine}, ${c.drop}` });
+/** A pill's fill: the accent when chosen, glass otherwise (lighter under the pointer). */
+export const pillLook = (c: Colors, on: boolean, hover = false) =>
+  on ? { backgroundColor: c.onBg, borderColor: c.onEdge, boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.3), ${c.drop}` } : glassControl(c, hover);
+/** A pressable glass control's style: its look for the state (`look(hover)`), and the motion between states. */
+export const controlStyle = (look: (hover: boolean) => object) => (state: PressableStateCallbackType) => [
+  motion.control,
+  look(hovered(state)),
+  state.pressed && motion.pressed,
+];
 
 /** A content card: a calm layer of the same glass. */
 export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
@@ -39,26 +72,21 @@ export function Card({ children, style }: { children: ReactNode; style?: StylePr
 }
 
 /** One choice of a radio group, as a glass capsule; the chosen one is tinted. */
-export function Pill({ label, on, onPress, testID }: { label: string; on: boolean; onPress: () => void; testID?: string }) {
+/** A choice in a row of pills; `button`: an action at the row's end instead (e.g. "+ New"). */
+export function Pill({ label, on, onPress, testID, button }: { label: string; on: boolean; onPress: () => void; testID?: string; button?: boolean }) {
   const c = useColors();
   return (
     <Pressable
       testID={testID}
-      accessibilityRole="radio"
-      aria-checked={on}
+      accessibilityRole={button ? "button" : "radio"}
+      aria-checked={button ? undefined : on}
       onPress={on ? undefined : onPress}
-      style={({ pressed }) => [
-        s.pill,
-        pillLook(c, on),
-        pressed && pressedStyle,
-      ]}
+      style={(state) => [s.pill, controlStyle((hover) => pillLook(c, on, hover))(state)]}
     >
       <Text style={[on ? s.pillOn : s.pillText, { color: on ? c.onInk : c.ink }]}>{label}</Text>
     </Pressable>
   );
 }
-
-const GLIDE = cubicBezier(0.25, 0.8, 0.25, 1); // eases out, no overshoot
 
 /** A segmented control: a recessed well with a glass lens that glides to the choice. `fit`: as wide as its labels.
  * Options with an `icon` stand it above the label; `accent`: the lens is tinted with the accent; `small`: 28 px high. */
@@ -88,20 +116,13 @@ export function Seg<T extends string | number>({
   return (
     <View accessibilityRole="radiogroup" aria-label={label} style={[s.seg, tall && s.segTall, { backgroundColor: c.well }, fit && s.segFit]}>
       {lens && (
-        <Animated.View
+        <View
           pointerEvents="none"
           style={[
             s.lens,
             tall && s.lensTall,
             accent ? { backgroundColor: c.tint, borderColor: c.tintEdge } : { backgroundColor: c.lens, borderColor: "transparent" },
-            {
-              boxShadow: `${c.shine}, ${c.drop}`,
-              width: lens.width,
-              transform: [{ translateX: lens.x }],
-              transitionProperty: ["transform", "width"],
-              transitionDuration: 320,
-              transitionTimingFunction: GLIDE,
-            },
+            { boxShadow: `${c.shine}, ${c.drop}`, width: lens.width, transform: [{ translateX: lens.x }] },
           ]}
         />
       )}
@@ -118,7 +139,7 @@ export function Seg<T extends string | number>({
               const { x, width } = e.nativeEvent.layout;
               setBoxes((b) => (b[String(o.value)]?.x === x && b[String(o.value)]?.width === width ? b : { ...b, [String(o.value)]: { x, width } }));
             }}
-            style={({ pressed }) => [s.segItem, tall && s.segItemTall, small && s.segItemSmall, !fit && s.grow, pressed && pressedStyle]}
+            style={({ pressed }) => [s.segItem, motion.control, tall && s.segItemTall, small && s.segItemSmall, !fit && s.grow, pressed && motion.pressed]}
           >
             {o.icon?.(on ? (accent ? c.signalInk : c.ink) : c.ink2)}
             <Text style={[on ? s.segOn : s.segText, (tall || small) && s.segTextSmall, { color: on ? c.ink : c.ink2 }]}>{o.label}</Text>
@@ -134,19 +155,12 @@ export function Switch({ value, onChange, label, testID }: { value: boolean; onC
   const c = useColors();
   return (
     <Pressable testID={testID} accessibilityRole="switch" aria-checked={value} accessibilityLabel={label} onPress={() => onChange(!value)} hitSlop={6}>
-      <Animated.View
-        style={[
-          s.track,
-          { backgroundColor: value ? c.signalFill : c.off, transitionProperty: "backgroundColor", transitionDuration: 200, transitionTimingFunction: "ease" },
-        ]}
-      >
-        <Animated.View
-          style={[
-            s.knob,
-            { transform: [{ translateX: value ? 14 : 0 }], transitionProperty: "transform", transitionDuration: 320, transitionTimingFunction: GLIDE },
-          ]}
-        />
-      </Animated.View>
+      {({ pressed }) => (
+        <View style={[s.track, { backgroundColor: value ? c.signalFill : c.off }]}>
+          {/* held down, the knob stretches toward where it's going, like iOS */}
+          <View style={[s.knob, pressed && s.knobHeld, { transform: [{ translateX: value ? (pressed ? 10 : 14) : 0 }] }]} />
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -188,16 +202,51 @@ export function Tile({
       aria-checked={on}
       accessibilityLabel={label}
       onPress={on ? undefined : onPress}
-      style={({ pressed }) => [
+      style={(state) => [
         s.tile,
         big && s.tileBig,
-        on ? { backgroundColor: c.tint, borderColor: c.tintEdge, boxShadow: `${c.shine}, ${c.drop}` } : glassControl(c),
-        pressed && pressedStyle,
+        controlStyle((hover) => (on ? { backgroundColor: c.tint, borderColor: c.tintEdge, boxShadow: `${c.shine}, ${c.drop}` } : glassControl(c, hover)))(state),
       ]}
     >
       <Text style={[on ? s.tileOn : s.tileText, big && s.tileTextBig, { color: c.ink }]}>{label}</Text>
       {sub && <Txt v="sub">{sub}</Txt>}
     </Pressable>
+  );
+}
+
+/** A one-line text box in the glass style: Enter submits, Escape cancels; its text starts selected, so typing replaces it. */
+export function TextBox({
+  value,
+  onChange,
+  onSubmit,
+  onCancel,
+  placeholder,
+  label,
+  maxLength,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit?: () => void;
+  onCancel?: () => void;
+  placeholder?: string;
+  label: string;
+  maxLength?: number;
+}) {
+  const c = useColors();
+  return (
+    <TextInput
+      value={value}
+      onChangeText={onChange}
+      onSubmitEditing={onSubmit}
+      onKeyPress={(e) => e.nativeEvent.key === "Escape" && onCancel?.()}
+      placeholder={placeholder}
+      placeholderTextColor={c.ink2}
+      accessibilityLabel={label}
+      maxLength={maxLength}
+      autoFocus
+      selectTextOnFocus
+      style={[s.textBox, glassControl(c), { color: c.ink }]}
+    />
   );
 }
 
@@ -209,10 +258,13 @@ export function Button({ label, onPress, primary, testID }: { label: string; onP
       testID={testID}
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [
+      style={(state) => [
         s.button,
-        primary ? { backgroundColor: c.signalFill, borderColor: "transparent", boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.3), ${c.drop}` } : glassControl(c),
-        pressed && pressedStyle,
+        controlStyle((hover) =>
+          primary
+            ? { backgroundColor: c.signalFill, borderColor: "transparent", boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.3), ${c.drop}`, opacity: hover ? 0.92 : 1 }
+            : glassControl(c, hover),
+        )(state),
       ]}
     >
       <Text style={[s.buttonText, { color: primary ? c.onSignal : c.ink }]}>{label}</Text>
@@ -224,13 +276,13 @@ export function Button({ label, onPress, primary, testID }: { label: string; onP
 export function IconButton({ label, onPress, children }: { label: string; onPress: () => void; children: ReactNode }) {
   const c = useColors();
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} hitSlop={4} style={({ pressed }) => [s.iconButton, glassControl(c), pressed && pressedStyle]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} hitSlop={4} style={(state) => [s.iconButton, controlStyle((hover) => glassControl(c, hover))(state)]}>
       {children}
     </Pressable>
   );
 }
 
-/** BudPilot's mark: the two earbuds on the accent. */
+/** Shono's mark: the two earbuds on the accent. */
 export function Mark({ size = 24 }: { size?: number }) {
   const c = useColors();
   return (
@@ -257,14 +309,33 @@ const s = StyleSheet.create({
   segText: { fontFamily: F.regular, fontSize: 13, lineHeight: 18 },
   segOn: { fontFamily: F.semibold, fontSize: 13, lineHeight: 18 },
   segTall: { borderRadius: 16 },
+  textBox: { flex: 1, minWidth: 0, borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7, fontFamily: F.regular, fontSize: 13, lineHeight: 18 },
   segItemTall: { borderRadius: 13, paddingVertical: 7, paddingHorizontal: 4, gap: 3 },
   segTextSmall: { fontSize: 12, lineHeight: 16 },
   segItemSmall: { paddingVertical: 3, paddingHorizontal: 9 },
   // the lens sits under the items: the well's padding (3) in from its top and bottom, moved across to the choice
-  lens: { position: "absolute", top: 3, bottom: 3, left: 0, borderRadius: 999, borderWidth: 1 },
+  lens: css({
+    position: "absolute",
+    top: 3,
+    bottom: 3,
+    left: 0,
+    borderRadius: 999,
+    borderWidth: 1,
+    transitionProperty: "transform, width",
+    transitionDuration: "320ms",
+    transitionTimingFunction: GLIDE,
+  }),
   lensTall: { borderRadius: 13 },
-  track: { width: 46, height: 26, borderRadius: 13, boxShadow: "inset 0 1px 3px rgba(0, 0, 0, 0.14)" },
-  knob: {
+  track: css({
+    width: 46,
+    height: 26,
+    borderRadius: 13,
+    boxShadow: "inset 0 1px 3px rgba(0, 0, 0, 0.14)",
+    transitionProperty: "background-color",
+    transitionDuration: "200ms",
+    transitionTimingFunction: "ease",
+  }),
+  knob: css({
     position: "absolute",
     top: 3,
     left: 3,
@@ -273,7 +344,11 @@ const s = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: "#FFFFFF", // white in both themes, like iOS
     boxShadow: "0 1px 2px rgba(0, 0, 0, 0.2), 0 3px 8px rgba(0, 0, 0, 0.12)",
-  },
+    transitionProperty: "transform, width",
+    transitionDuration: "320ms, 180ms",
+    transitionTimingFunction: `${GLIDE}, ease-out`,
+  }),
+  knobHeld: { width: 30 },
   tile: { flex: 1, borderWidth: 1, borderRadius: 16, paddingTop: 10, paddingBottom: 8, paddingHorizontal: 6, alignItems: "center", gap: 6 },
   tileBig: { paddingVertical: 14, gap: 2 },
   tileText: { fontFamily: F.regular, fontSize: 12, lineHeight: 15, textAlign: "center" },

@@ -1,9 +1,10 @@
-// BudPilot for Windows: an Electron window around the Expo web build, talking to the earbuds over Web Bluetooth.
+// Shono for Windows: an Electron window around the Expo web build, talking to the earbuds over Web Bluetooth.
 // It lives in the tray, so it can keep the noise setting the user picked: the earbuds' firmware switches ANC on by
-// itself every time they power up, and only a running BudPilot can switch it back.
+// itself every time they power up, and only a running Shono can switch it back.
 const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, nativeTheme, net, protocol, screen, session, shell } = require("electron");
-const { execFile, spawn } = require("node:child_process");
+const { execFile, execFileSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
+const readline = require("node:readline");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
@@ -18,16 +19,21 @@ const SCAN_MS = 15000;
 const AUTO_CONNECT_MS = 5000;
 // the portable exe runs from a temp copy; Windows must start the real file
 const EXE = process.env.PORTABLE_EXECUTABLE_FILE ?? process.execPath;
-const LOGIN = { path: EXE, args: ["--hidden"] };
+// Start with Windows: one entry, under a fixed name (Electron's default name follows the app's name and id, so the
+// rename would have left the old entry behind and started both apps)
+const LOGIN = { path: EXE, args: ["--hidden"], name: "Shono" };
+const OLD_LOGIN = "electron.app.BudPilot"; // BudPilot's entry, pointing at whichever exe set it (a portable 0.3.1 here)
+const RUN = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
 // An opaque window: in a see-through one Chromium turns ClearType off and every word looks soft. The page paints its
 // own frosted glass (see "frost" below); these match its base colors, so resizing never flashes another color.
 const BACKGROUND = { light: "#F3F4F7", dark: "#141519" };
 const background = () => (nativeTheme.shouldUseDarkColors ? BACKGROUND.dark : BACKGROUND.light);
-// The taskbar and notifications know BudPilot by this. Windows remembers an icon per id for good, and under the old
-// ids it remembered a wrong one (the button showed up before its icon was set); live mode has its own id, so
-// Electron's icon can never stick to the real app's.
-const APP_ID = app.isPackaged ? "wahidalways.BudPilot.App" : "wahidalways.BudPilot.Dev";
+// The taskbar and notifications know Shono by this. Windows remembers an icon per id for good, and under the old
+// ids it remembered wrong ones (the atom; a blank page, when the icon path pointed inside app.asar), so the installed
+// app uses the id its installer gives the Start menu shortcut (electron-builder's appId): taskbar, notifications and
+// shortcut agree. Live mode has its own id, so Electron's icon can never stick to the real app's.
+const APP_ID = app.isPackaged ? "com.wahidalways.budpilot" : "wahidalways.Shono.Dev";
 const FLYOUT_W = 360;
 const SETTINGS = { width: 900, height: 660 };
 const EDGE = 12; // the flyout's gap from the taskbar and the screen edge, like Windows' own flyouts
@@ -40,11 +46,18 @@ let flyoutHeight = 520; // the page reports its real height
 let settingsBounds; // where the user left the settings window
 let hiddenAt = 0;
 
+// The settings folder keeps the app's first name: the saved settings, the connection log and the Start with Windows
+// marker are in %APPDATA%\BudPilot, and the rename to Shono (2026-11-23) mustn't lose them. Before the lock, which
+// lives in this folder too.
+app.setPath("userData", path.join(app.getPath("appData"), "BudPilot"));
+
 if (!app.requestSingleInstanceLock()) process.exit(0); // already running: the first copy shows itself
 app.on("second-instance", () => showSettings());
 
-// "secure" makes app:// a secure context, which Web Bluetooth requires.
-protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+// "secure" makes app:// a secure context, which Web Bluetooth requires; "codeCache" keeps V8's compiled copy of the
+// page's JavaScript between starts (Chromium does that only for http(s) unless a scheme asks), so it isn't
+// compiled again on every start.
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true } }]);
 
 function placeFlyout() {
   const { workArea: wa } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
@@ -52,14 +65,17 @@ function placeFlyout() {
   win.setBounds({ x: wa.x + wa.width - FLYOUT_W - EDGE, y: wa.y + wa.height - height - EDGE, width: FLYOUT_W, height });
 }
 
-// The taskbar button: BudPilot's name and mark, not those of whatever exe runs it (Electron's atom in live mode).
-// Windows ignores the icon unless a relaunch command comes with it, and forgets all of it when the button is
-// rebuilt (leaving the flyout view), so this runs again each time.
+// The taskbar button: Shono's name and mark, not those of whatever exe runs it (Electron's atom in live mode).
+// Windows ignores the icon unless a relaunch command comes with it. It has to be in place BEFORE the button exists
+// (leaving the flyout view makes a new one): a button made without it shows the exe's icon, and Windows then keeps
+// that icon for the id (the atom the user saw on opening settings, 2026-11-23).
 const ICON = path.join(__dirname, "icon.ico");
 function brandTaskbar() {
   if (process.platform !== "win32") return;
   const relaunchCommand = app.isPackaged ? `"${EXE}"` : `"${process.execPath}" "${app.getAppPath()}"`;
-  win.setAppDetails({ appId: APP_ID, appIconPath: ICON, appIconIndex: 0, relaunchCommand, relaunchDisplayName: "BudPilot" });
+  // the shell reads appIconPath itself, and can't see inside app.asar (that gave a blank page): the packaged exe carries
+  // the icon, and in live mode icon.ico is a real file
+  win.setAppDetails({ appId: APP_ID, appIconPath: app.isPackaged ? EXE : ICON, appIconIndex: 0, relaunchCommand, relaunchDisplayName: "Shono" });
   win.setIcon(ICON);
 }
 
@@ -70,8 +86,8 @@ function setView(next) {
   win.webContents.send("view", next);
   if (win.isMaximized()) win.unmaximize();
   win.setAlwaysOnTop(flyout);
+  if (!flyout) brandTaskbar(); // before the button appears (see brandTaskbar)
   win.setSkipTaskbar(flyout);
-  if (!flyout) brandTaskbar();
   win.setResizable(!flyout);
   if (flyout) placeFlyout();
   else win.setBounds(settingsBounds ?? { ...SETTINGS, ...centered(SETTINGS) });
@@ -104,18 +120,19 @@ function createWindow() {
     ...(view === "settings" ? settings : { width: FLYOUT_W, height: flyoutHeight }),
     minWidth: FLYOUT_W,
     minHeight: 240,
-    title: "BudPilot",
+    title: "Shono",
     icon: ICON,
     show: false, // shown below, once Windows has the taskbar button's icon
     frame: false, // the page draws its own title bar
     autoHideMenuBar: true,
     backgroundColor: background(),
-    // keep watching the earbuds while hidden
-    webPreferences: { backgroundThrottling: false, preload: path.join(__dirname, "preload.js") },
+    // keep watching the earbuds while hidden; no spellchecker (its dictionaries cost memory, and the one text box is an
+    // EQ's name)
+    webPreferences: { backgroundThrottling: false, spellcheck: false, preload: path.join(__dirname, "preload.js") },
   });
   brandTaskbar();
   for (const moved of ["move", "resize", "show"]) win.on(moved, sendPlace);
-  win.on("show", readWallpaper); // it may have changed while BudPilot sat in the tray
+  win.on("show", readWallpaper); // it may have changed while Shono sat in the tray
   readWallpaper();
   if (!HIDDEN) win.show();
   if (view === "flyout") {
@@ -131,7 +148,7 @@ function createWindow() {
     hiddenAt = Date.now();
   });
 
-  // links (the credits) open in the browser, never inside BudPilot
+  // links (the credits) open in the browser, never inside Shono
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\//.test(url)) void shell.openExternal(url);
     return { action: "deny" };
@@ -162,7 +179,7 @@ function createWindow() {
   win.webContents.on("did-finish-load", autoConnect);
   setInterval(autoConnect, AUTO_CONNECT_MS);
 
-  // closing the window keeps BudPilot running in the tray; Quit is in the tray menu
+  // closing the window keeps Shono running in the tray; Quit is in the tray menu
   win.on("close", (event) => {
     if (quitting) return;
     event.preventDefault();
@@ -209,7 +226,7 @@ function sendPlace() {
 }
 ipcMain.handle("frost", () => ({ ...place(), wallpaper: wallpaper.url }));
 
-// Bluetooth scanning needs a user gesture; the shell provides one so BudPilot can connect by itself.
+// Bluetooth scanning needs a user gesture; the shell provides one so Shono can connect by itself.
 const autoConnect = () => win?.webContents.executeJavaScript("globalThis.__budpilotAutoConnect?.()", true).catch(() => {});
 
 // Why links drop, in a file that outlives reloads and new versions: %APPDATA%\BudPilot\connection.log (the page
@@ -226,150 +243,71 @@ function log(line) {
 }
 ipcMain.on("log", (_e, line) => typeof line === "string" && log(line.slice(0, 600)));
 
-// Whether Windows has the earbuds connected (for sound), checked every 3 s: BudPilot tries to connect the moment
-// they are, and can tell "connected to Windows but not answering BudPilot" apart from "in the case or out of range".
-const PC_LINK_PS = `
-$key = '{83DA6326-97A6-4088-9453-A1923F573B29} 15'
-$id = $null
-while ($true) {
-  if (-not $id) { $id = (Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue | Where-Object { $_.FriendlyName -like 'HOCO EQ35*' -and $_.InstanceId -like 'BTHENUM\\DEV_*' } | Select-Object -First 1).InstanceId }
-  $on = [bool]$id -and [bool](Get-PnpDeviceProperty -InstanceId $id -KeyName $key -ErrorAction SilentlyContinue).Data
-  [Console]::Out.WriteLine([int]$on)
-  Start-Sleep -Seconds 3
-}`;
-let pcLinked;
-function watchPcLink() {
+// One small helper process does Shono's Windows-only watching (desktop/helper/helper.cs):
+// - whether something runs full screen (Game mode's auto switch);
+// - whether Windows has the earbuds connected (Shono connects the moment they are, and can tell "connected to
+//   Windows but not answering Shono" apart from "in the case or out of range");
+// - the earbuds' volume taps, passed on as Windows volume keys (the earbuds keep their own volume);
+// - the play/pause fix: Windows acts twice on the earbuds' tap (seen 2026-11-22: paused, then played 0.19-0.23 s
+//   later), so a flip that flips straight back is put back; with it, Windows' own volume, so the page doesn't take
+//   what follows in the earbuds for a volume tap.
+// It replaced four PowerShells (~330 MB, a 25-times-a-second media poll) and exits when Shono closes its stdin.
+const HELPER = app.isPackaged ? path.join(process.resourcesPath, "shono-helper.exe") : path.join(__dirname, "helper", "shono-helper.exe");
+let helper;
+let full; // something runs full screen
+let pcLinked; // Windows has the earbuds connected (for sound)
+let tapsWanted = false;
+const tellFull = () => full !== undefined && win?.webContents.executeJavaScript(`globalThis.__budpilotFullscreen?.(${full})`).catch(() => {});
+const tellPcLink = () => pcLinked !== undefined && win?.webContents.send("pc-link", pcLinked);
+const toHelper = (line) => helper?.stdin.writable && helper.stdin.write(`${line}\n`);
+
+function startHelper() {
   if (process.platform !== "win32") return;
-  const ps = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(PC_LINK_PS, "utf16le").toString("base64")], { windowsHide: true });
-  const tell = () => pcLinked !== undefined && win?.webContents.send("pc-link", pcLinked);
-  ps.stdout.on("data", (chunk) => {
-    for (const line of chunk.toString().split(/\r?\n/)) {
-      const t = line.trim();
-      if ((t !== "0" && t !== "1") || (t === "1") === pcLinked) continue;
-      pcLinked = t === "1";
+  if (!fs.existsSync(HELPER)) return log(`helper missing (${HELPER}): no full-screen, Windows link, volume-key or play/pause help`);
+  const h = spawn(HELPER, [SUPPORTED.source.replace(/^\^/, "")], { windowsHide: true });
+  helper = h;
+  h.on("error", (e) => log(`helper failed to start: ${e.message}`));
+  h.on("exit", (code) => {
+    if (helper !== h) return;
+    helper = undefined;
+    if (quitting) return;
+    log(`helper stopped (${code}); starting it again`);
+    setTimeout(startHelper, 5000);
+  });
+  readline.createInterface({ input: h.stdout }).on("line", (line) => {
+    const [what, value = ""] = line.trim().split(" ");
+    if (what === "full") {
+      full = value === "1";
+      tellFull();
+    } else if (what === "pc") {
+      pcLinked = value === "1";
       log(pcLinked ? "windows: earbuds connected" : "windows: earbuds disconnected");
-      tell();
+      tellPcLink();
       if (pcLinked) autoConnect();
-    }
+    } else if (what === "vol") win?.webContents.send("windows-volume", Number(value));
+    else if (what === "error") log(`helper: ${line.slice(6)}`);
+    else if (what === "settings") log("windows: the Settings app came to the front");
+    else if (DEV_URL && line.trim()) console.log("helper:", line.trim());
   });
-  win.webContents.on("did-finish-load", tell); // a reload forgets it
-  app.on("before-quit", () => ps.kill());
+  if (tapsWanted) toHelper("taps 1");
 }
-
-// Game mode's auto switch: Windows' own "user notification state" says when something runs full screen
-// (2 = a full-screen app such as a borderless game or a video, 3 = a full-screen Direct3D game).
-const FULLSCREEN_PS =
-  "Add-Type -Namespace W -Name N -MemberDefinition '[DllImport(\"shell32.dll\")] public static extern int SHQueryUserNotificationState(out int s);';" +
-  " while ($true) { $s = 0; [void][W.N]::SHQueryUserNotificationState([ref]$s); [Console]::Out.WriteLine($s); Start-Sleep -Seconds 3 }";
-
-function watchFullscreen() {
-  if (process.platform !== "win32") return;
-  const ps = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", FULLSCREEN_PS], { windowsHide: true });
-  let full;
-  const tell = () => {
-    if (full !== undefined) win?.webContents.executeJavaScript(`globalThis.__budpilotFullscreen?.(${full})`).catch(() => {});
-  };
-  ps.stdout.on("data", (chunk) => {
-    for (const line of chunk.toString().split(/\r?\n/)) {
-      const state = line.trim();
-      if (!state) continue;
-      const now = state === "2" || state === "3";
-      if (now !== full) {
-        full = now;
-        tell();
-      }
-    }
-  });
-  win.webContents.on("did-finish-load", tell); // a reload forgets it
-  app.on("before-quit", () => ps.kill());
-}
-
-// The earbuds' volume taps, passed on as Windows volume-key presses (so Windows changes and shows its volume): the
-// earbuds keep their own volume and never tell Windows. One PowerShell stays ready; each stdin line is +n / -n presses.
-const VOLUME_KEYS_PS =
-  "Add-Type -Namespace W -Name K -MemberDefinition '[DllImport(\"user32.dll\")] public static extern void keybd_event(byte k, byte s, int f, int e);';" +
-  " while ($null -ne ($l = [Console]::In.ReadLine())) { $n = [int]$l; $k = if ($n -gt 0) { 0xAF } else { 0xAE };" +
-  " for ($i = 0; $i -lt [Math]::Abs($n); $i++) { [W.K]::keybd_event($k, 0, 0, 0); [W.K]::keybd_event($k, 0, 2, 0) } }";
-let volumeKeys;
-function pressVolumeKeys(n) {
-  if (process.platform !== "win32") return;
-  if (!volumeKeys || volumeKeys.exitCode !== null) {
-    volumeKeys = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", VOLUME_KEYS_PS], { windowsHide: true });
-    volumeKeys.on("error", () => (volumeKeys = undefined));
-  }
-  volumeKeys.stdin.write(`${n}\n`);
-}
-ipcMain.on("volume-keys", (_e, n) => Number.isInteger(n) && n !== 0 && Math.abs(n) <= 30 && pressVolumeKeys(n));
-app.on("before-quit", () => volumeKeys?.kill());
-
-// Windows acts twice on the earbuds' play/pause tap: seen 2026-11-22, every tap paused Chrome and 0.19-0.23 s later
-// it played again (so a paused video never resumed), while Windows' own Play/Pause key acts once. While the earbuds
-// are connected, this watches the playing app (Windows' media sessions) and, when a play/pause flip flips straight
-// back, puts it back the way the tap meant.
-// It also reports Windows' own volume whenever it moves ("vol 64"): the page must not mistake what follows in the
-// earbuds for a volume tap (Windows hands them its volume while sound plays).
-const MEDIA_TAPS_PS = `
-$null = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType = WindowsRuntime]
-Add-Type -AssemblyName System.Runtime.WindowsRuntime
-$asTask = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1' } | Select-Object -First 1
-$t = $asTask.MakeGenericMethod([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]).Invoke($null, @([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()))
-$t.Wait(-1) | Out-Null
-$mgr = $t.Result
-Add-Type -TypeDefinition @"
-using System; using System.Runtime.InteropServices;
-[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class BudEnumCo {}
-[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IBudEnum { int NotImpl1(); [PreserveSig] int GetDefaultAudioEndpoint(int flow, int role, out IBudDevice dev); }
-[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IBudDevice { [PreserveSig] int Activate(ref Guid iid, int ctx, IntPtr p, [MarshalAs(UnmanagedType.IUnknown)] out object o); }
-[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IBudVolume { int f1(); int f2(); int f3(); int f4(); int f5(); int f6(); [PreserveSig] int GetMasterVolumeLevelScalar(out float level); }
-public static class BudVol {
-  public static float Get() { var e = (IBudEnum)(new BudEnumCo()); IBudDevice d; e.GetDefaultAudioEndpoint(0, 1, out d);
-    var iid = typeof(IBudVolume).GUID; object o; d.Activate(ref iid, 23, IntPtr.Zero, out o); float l; ((IBudVolume)o).GetMasterVolumeLevelScalar(out l); return l; }
-}
-"@
-$app = $null; $last = $null; $before = $null; $flippedAt = [DateTime]::MinValue; $quietUntil = [DateTime]::MinValue
-$tick = 0; $vol = -1
-while ($true) {
-  Start-Sleep -Milliseconds 40
-  if ((++$tick % 5) -eq 0) { try { $v = [int][Math]::Round([BudVol]::Get() * 100); if ($v -ne $vol) { $vol = $v; [Console]::Out.WriteLine("vol $v") } } catch {} }
-  try {
-    $s = $mgr.GetCurrentSession()
-    if (-not $s) { $last = $null; continue }
-    if ($s.SourceAppUserModelId -ne $app) { $app = $s.SourceAppUserModelId; $last = $null }
-    $st = [string]$s.GetPlaybackInfo().PlaybackStatus
-    if ($st -ne 'Playing' -and $st -ne 'Paused') { continue }
-    $now = [DateTime]::Now
-    if ($null -eq $last -or $st -eq $last) { $last = $st; continue }
-    if ($now -lt $quietUntil) { $last = $st; continue }
-    if ($st -eq $before -and ($now - $flippedAt).TotalMilliseconds -lt 450) {
-      if ($last -eq 'Paused') { [void]$s.TryPauseAsync() } else { [void]$s.TryPlayAsync() }
-      [Console]::Out.WriteLine("kept $last")
-      $quietUntil = $now.AddMilliseconds(700); $before = $null; $last = $st; continue
-    }
-    $before = $last; $last = $st; $flippedAt = $now
-  } catch { $last = $null }
-}`;
-let mediaTaps;
+ipcMain.on("volume-keys", (_e, n) => Number.isInteger(n) && n !== 0 && Math.abs(n) <= 30 && toHelper(`keys ${n}`));
 ipcMain.on("media-taps", (_e, on) => {
-  if (process.platform !== "win32" || !!on === !!mediaTaps) return;
-  if (!on) return void (mediaTaps.kill(), (mediaTaps = undefined));
-  const ps = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(MEDIA_TAPS_PS, "utf16le").toString("base64")], { windowsHide: true });
-  ps.on("exit", () => mediaTaps === ps && (mediaTaps = undefined));
-  ps.stdout.on("data", (chunk) => {
-    for (const line of chunk.toString().split(/\r?\n/)) {
-      const vol = /^vol (\d+)$/.exec(line.trim());
-      if (vol) win?.webContents.send("windows-volume", Number(vol[1]));
-      else if (DEV_URL && line.trim()) console.log("media taps:", line.trim());
-    }
-  });
-  mediaTaps = ps;
+  tapsWanted = !!on;
+  toHelper(`taps ${tapsWanted ? 1 : 0}`);
 });
-app.on("before-quit", () => mediaTaps?.kill());
+app.on("before-quit", () => helper?.stdin.end()); // it exits when its stdin closes
 
 // Start with Windows (installed app only; the live test window isn't something Windows should start)
-const startsWithWindows = () => app.getLoginItemSettings(LOGIN).openAtLogin;
+/** What Windows starts at sign-in under `name`, or undefined. */
+function runEntry(name) {
+  try {
+    return /REG_SZ\s+(.+)/.exec(execFileSync("reg", ["query", RUN, "/v", name], { windowsHide: true, encoding: "utf8" }))?.[1]?.trim();
+  } catch {
+    return undefined; // no such entry
+  }
+}
+const startsWithWindows = () => !!runEntry(LOGIN.name)?.toLowerCase().includes(EXE.toLowerCase());
 function setStartWithWindows(on) {
   app.setLoginItemSettings({ ...LOGIN, openAtLogin: on });
   updateTrayMenu();
@@ -392,7 +330,7 @@ ipcMain.on("window", (_e, action) => {
   else if (action === "settings") showSettings();
   else if (action === "flyout") showFlyout();
 });
-// the window follows BudPilot's own theme choice
+// the window follows Shono's own theme choice
 ipcMain.on("theme", (_e, t) => {
   if (!["system", "light", "dark"].includes(t)) return;
   nativeTheme.themeSource = t;
@@ -403,11 +341,11 @@ let tray; // kept referenced, or the tray icon disappears
 function updateTrayMenu() {
   tray?.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "Open BudPilot", click: showSettings },
+      { label: "Open Shono", click: showSettings },
       ...(app.isPackaged ? [{ label: "Start with Windows", type: "checkbox", checked: startsWithWindows(), click: (item) => setStartWithWindows(item.checked) }] : []),
       { type: "separator" },
       {
-        label: "Quit BudPilot",
+        label: "Quit Shono",
         click: () => {
           quitting = true;
           app.quit();
@@ -420,11 +358,11 @@ function updateTrayMenu() {
 // a line glyph like Windows' own tray icons, dark on a light taskbar and white on a dark one; each .ico has one
 // hand-tuned image per size, since Windows takes the exact size it shows (20 px at 125%), never a stretched one
 const trayIcon = () => path.join(__dirname, nativeTheme.shouldUseDarkColorsForSystemIntegratedUI ? "tray-dark.ico" : "tray-light.ico");
-nativeTheme.on("updated", () => tray?.setImage(trayIcon())); // the taskbar's theme can change while BudPilot runs
+nativeTheme.on("updated", () => tray?.setImage(trayIcon())); // the taskbar's theme can change while Shono runs
 
 function createTray() {
   tray = new Tray(trayIcon());
-  tray.setToolTip("BudPilot: keeps your noise setting");
+  tray.setToolTip("Shono: keeps your noise setting");
   tray.on("click", () => {
     // a click on the tray icon blurs an open flyout first; don't open it again straight away
     if (Date.now() - hiddenAt < 300) return;
@@ -447,20 +385,26 @@ app.whenReady().then(() => {
     callback(permission !== "media" || (details.mediaTypes ?? []).every((t) => t === "audio")),
   );
   if (app.isPackaged) {
-    // Start with Windows is on by default (first run only, so turning it off sticks)
+    // Start with Windows: on by default (first run only, so turning it off sticks). BudPilot's old entry is replaced
+    // by Shono's, on if it was on; and an entry pointing at another copy (an older or moved exe) points at this one.
     const firstRun = path.join(app.getPath("userData"), "first-run-done");
-    if (!fs.existsSync(firstRun)) {
-      app.setLoginItemSettings({ ...LOGIN, openAtLogin: true });
-      fs.writeFileSync(firstRun, "");
+    const wasOn = !!runEntry(OLD_LOGIN);
+    if (wasOn) {
+      try {
+        execFileSync("reg", ["delete", RUN, "/v", OLD_LOGIN, "/f"], { windowsHide: true });
+      } catch (e) {
+        log(`start with Windows: couldn't remove BudPilot's old entry: ${e.message}`);
+      }
     }
-    // when it's on but points at another copy (an older exe), point it at this one
-    const items = app.getLoginItemSettings(LOGIN).launchItems ?? [];
-    if (items.some((i) => i.enabled && i.path.toLowerCase() !== EXE.toLowerCase())) app.setLoginItemSettings({ ...LOGIN, openAtLogin: true });
+    const mine = runEntry(LOGIN.name);
+    if (!fs.existsSync(firstRun) || wasOn || (mine && !startsWithWindows())) app.setLoginItemSettings({ ...LOGIN, openAtLogin: true });
+    if (!fs.existsSync(firstRun)) fs.writeFileSync(firstRun, "");
+    log(`start with Windows: ${startsWithWindows() ? "on" : "off"}${wasOn ? " (moved from BudPilot's old entry)" : ""}`);
   }
-  log(`BudPilot ${app.getVersion()} started${HIDDEN ? " with Windows" : ""}`);
+  log(`Shono ${app.getVersion()} started${HIDDEN ? " with Windows" : ""}`);
   createWindow();
-  watchFullscreen();
-  watchPcLink();
+  startHelper();
+  win.webContents.on("did-finish-load", () => (tellFull(), tellPcLink())); // a reload forgets both
   createTray();
 });
 

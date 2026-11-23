@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { F, useColors } from "@/theme";
-import { Txt } from "@/ui/kit";
+import { controlStyle, Txt } from "@/ui/kit";
 import { latencyMs } from "@/utils/game";
 
 const BEEPS = 6;
@@ -79,12 +79,13 @@ export function LatencyCheck({ gameOn }: { gameOn: boolean }) {
         accessibilityRole="button"
         accessibilityLabel={beep ? `Tap when you hear beep ${beep} of ${BEEPS}` : `Start the latency check with Game mode ${gameOn ? "on" : "off"}`}
         onPress={beep ? () => tap.current?.() : () => void start()}
-        style={({ pressed }) => [
+        style={(state) => [
           s.button,
-          beep
-            ? { backgroundColor: c.signalFill, borderColor: "transparent" }
-            : { backgroundColor: c.card, borderColor: c.stroke, boxShadow: `${c.shine}, ${c.drop}` },
-          pressed && s.pressed,
+          controlStyle((hover) =>
+            beep
+              ? { backgroundColor: c.signalFill, borderColor: "transparent" }
+              : { backgroundColor: hover ? c.hover : c.card, borderColor: c.stroke, boxShadow: `${c.shine}, ${c.drop}` },
+          )(state),
         ]}
       >
         <Text style={[s.buttonText, { color: beep ? c.onSignal : c.ink }]}>
@@ -112,7 +113,6 @@ const s = StyleSheet.create({
   wrap: { gap: 10 },
   button: { borderRadius: 999, borderWidth: 1, paddingVertical: 12, alignItems: "center" },
   buttonText: { fontFamily: F.semibold, fontSize: 14 },
-  pressed: { transform: [{ scale: 0.98 }] },
   results: { flexDirection: "row", gap: 24 },
   num: { fontFamily: F.semibold, fontVariant: ["tabular-nums"] },
 });

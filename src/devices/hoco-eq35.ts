@@ -1,8 +1,15 @@
-/** What Hoco's own app (hoco.music) shows and sends for the HOCO EQ35 ANC, so BudPilot matches it. */
+/** What Hoco's own app (hoco.music) shows and sends for the HOCO EQ35 ANC, so Shono matches it. */
 export const HOCO_EQ35 = {
   eqBands: ["30", "60", "120", "250", "500", "1K", "2K", "4K", "8K", "16K"],
   /** Custom slider range in Hoco's app (VerticalSeekBarView: -5..5), in dB either side of 0. */
   eqMax: 5,
+  /** Product photos for the device card, served from public/device-photos when this computer has them (Hoco's
+   * artwork, kept off GitHub); the card shows no photos when they're missing. `aspect`: width / height. */
+  photos: {
+    left: { uri: "/device-photos/eq35/left.png", aspect: 420 / 600 },
+    right: { uri: "/device-photos/eq35/right.png", aspect: 420 / 600 },
+    case: { uri: "/device-photos/eq35/case.png", aspect: 1 },
+  },
   /** The EQ mode Hoco's "Custom Equalizer" uses. */
   customEqMode: 9,
   /** Hoco's named presets: the exact mode and gains its app sends. The earbuds play their own stored curve for

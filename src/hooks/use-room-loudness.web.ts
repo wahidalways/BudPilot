@@ -21,7 +21,7 @@ export function useRoomLoudness(on: boolean): RoomLoudness {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const mics = devices.filter((d) => d.kind === "audioinput" && d.deviceId !== "default" && d.deviceId !== "communications");
-        if (mics.length && mics.every((d) => !d.label)) throw new Error("Allow microphone access for BudPilot to use Adaptive.");
+        if (mics.length && mics.every((d) => !d.label)) throw new Error("Allow microphone access for Shono to use Adaptive.");
         const mic = mics.find((d) => !SKIP.test(d.label));
         if (!mic) throw new Error("Adaptive needs a microphone on this computer; the earbuds' own mic would lower the music quality.");
         const stream = await navigator.mediaDevices.getUserMedia({

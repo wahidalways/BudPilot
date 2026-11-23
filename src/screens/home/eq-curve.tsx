@@ -12,7 +12,7 @@ type Props = {
   max: number;
   /** a preset is playing: the curve (your Custom) shows faded */
   faded: boolean;
-  /** shown, not edited (Game mode's Footsteps EQ) */
+  /** shown, not edited (the built-in Game EQ) */
   readOnly?: boolean;
   /** every step while dragging (for the display) */
   onChange: (gains: number[]) => void;

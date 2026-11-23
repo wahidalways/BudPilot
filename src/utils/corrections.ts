@@ -1,4 +1,4 @@
-/** One time BudPilot put the noise setting back after the earbuds changed it by themselves. */
+/** One time Shono put the noise setting back after the earbuds changed it by themselves. */
 export type Correction = { at: number; from: number; to: number; ms: number };
 
 const KEEP = 50; // enough for the log and today's count, small enough for local storage

@@ -138,7 +138,7 @@ test("opens over a fake link, then switches to transparency with the stored gain
 /** A written command as "op: data" in hex, without the frame around it. */
 const cmd = (w: Uint8Array) => `${w[4].toString(16)}: ${[...w.subarray(8, w.length - 1)].map((b) => b.toString(16).padStart(2, "0")).join(" ")}`;
 
-test("in game mode the earbuds refuse touch changes: BudPilot steps out of it for the change, then back", async () => {
+test("in game mode the earbuds refuse touch changes: Shono steps out of it for the change, then back", async () => {
   const { t, written } = fakeEarbuds();
   const e = await Earbuds.open(t, () => {});
   await e.setGameMode(true);

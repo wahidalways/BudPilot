@@ -26,7 +26,7 @@ export function NoiseIcon({ mode, ...p }: P & { mode: number }) {
   );
 }
 
-/** BudPilot's mark: two earbuds. */
+/** Shono's mark: two earbuds. */
 export const BudsIcon = (p: P) => (
   <Line {...p} strokeWidth={p.strokeWidth ?? 2.2}>
     <Path d="M7 4a4 4 0 0 0-1 7.9V19a2 2 0 0 0 4 0v-6.5A4 4 0 0 0 7 4Z" />

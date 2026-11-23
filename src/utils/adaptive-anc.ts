@@ -1,4 +1,4 @@
-// Adaptive noise cancelling, done by BudPilot: the earbuds have no adaptive mode, so the app picks Low / Mid / High
+// Adaptive noise cancelling, done by Shono: the earbuds have no adaptive mode, so the app picks Low / Mid / High
 // from how loud the room is (a computer microphone's level, in dBFS).
 
 /** Room levels (dBFS) between Low|Mid and Mid|High. shortcut: uncalibrated for any one mic; tune here if it reacts oddly. */

@@ -1,29 +1,30 @@
-BudPilot License
+Shono License
 Version 1.0, 22 November 2026
 
 Copyright (c) 2026 wahidalways. All rights reserved.
 
-BudPilot is free for everyone to use. This license explains what you may do
-with BudPilot, what needs permission first, and the rules that protect you
+Shono is free for everyone to use. This license explains what you may do
+with Shono, what needs permission first, and the rules that protect you
 and the author. It is written in plain English on purpose.
 
 
 1. Words used in this license
 
-"BudPilot" means the BudPilot app and everything in this repository
-(https://github.com/wahidalways/BudPilot): its source code, design, text,
+"Shono" means the Shono app (called BudPilot before November 2026) and
+everything in this repository (https://github.com/wahidalways/BudPilot): its
+source code, design, text,
 graphics, name and icons.
 
-"The author" means wahidalways, who owns BudPilot.
+"The author" means wahidalways, who owns Shono.
 
-"You" means anyone who gets, uses or reads BudPilot, and any company or
+"You" means anyone who gets, uses or reads Shono, and any company or
 group you act for.
 
 "An official build" means an APK, EXE or other installer published on this
 repository's Releases page (https://github.com/wahidalways/BudPilot/releases).
 
 "A changed version" means anything made by changing, adding to, removing
-from, translating or repackaging BudPilot, other than the build settings
+from, translating or repackaging Shono, other than the build settings
 allowed in section 2.4.
 
 "Written permission" means a message from the author that clearly gives
@@ -33,22 +34,22 @@ Permission covers only what it says.
 
 2. What you may do, for free
 
-2.1 Use. Install and use BudPilot on any number of devices, for any
+2.1 Use. Install and use Shono on any number of devices, for any
     purpose. This includes businesses, schools and other organizations, and
     their work devices.
 
 2.2 Share person to person. Give an official build, unchanged and for free,
     directly to people you know, for example by sending them the file.
 
-2.3 Read and learn. Read the source code to learn how BudPilot works.
+2.3 Read and learn. Read the source code to learn how Shono works.
 
-2.4 Build and change it for yourself. Build BudPilot from this source code,
+2.4 Build and change it for yourself. Build Shono from this source code,
     and change it, for your own private use. Changing only build settings,
     such as the Expo account, is fine. Keep changed code private: on your
     own devices or in a private repository.
 
-2.5 Talk about BudPilot. Use the BudPilot name and icon to refer to
-    BudPilot, for example in reviews, articles, videos, tutorials and links
+2.5 Talk about Shono. Use the Shono name and icon to refer to
+    Shono, for example in reviews, articles, videos, tutorials and links
     to the official page, as long as you do not suggest that the author
     made, approved or supports your work.
 
@@ -57,28 +58,28 @@ Permission covers only what it says.
 
 Unless the author gives you written permission, you may not:
 
-3.1 Share or publish a changed version of BudPilot in any form. This
+3.1 Share or publish a changed version of Shono in any form. This
     includes a public fork with changes and a build made from changed code.
 
-3.2 Upload or offer BudPilot, even unchanged, on any website, app store,
+3.2 Upload or offer Shono, even unchanged, on any website, app store,
     file-sharing service or other public place, other than this repository.
 
-3.3 Sell BudPilot, charge money for it or for access to it, add ads to it,
+3.3 Sell Shono, charge money for it or for access to it, add ads to it,
     collect payments through it, or include it in anything you sell, such
-    as earbuds or phones sold with BudPilot.
+    as earbuds or phones sold with Shono.
 
-3.4 Copy any part of BudPilot's code, design, text or graphics into another
+3.4 Copy any part of Shono's code, design, text or graphics into another
     app, website or project.
 
-3.5 Use the BudPilot name or icon for another app or product, for a changed
+3.5 Use the Shono name or icon for another app or product, for a changed
     version, or in any way that could make people think something is
-    official BudPilot.
+    official Shono.
 
-3.6 Use BudPilot's code, design or other content to train, fine-tune or
+3.6 Use Shono's code, design or other content to train, fine-tune or
     test an AI or machine-learning model, or to build a dataset for one.
 
 3.7 Remove or change this license, or the copyright notice above, in any
-    copy of BudPilot's source code.
+    copy of Shono's source code.
 
 
 4. Asking for permission
@@ -92,7 +93,7 @@ conditions such as credit or payment. No answer means no permission.
 
 Bug reports, ideas and requests for new earbuds are welcome as GitHub
 issues. If you share an idea or other feedback, the author may use it
-freely, without owing you anything. BudPilot does not take outside code, so
+freely, without owing you anything. Shono does not take outside code, so
 pull requests may be closed without review.
 
 
@@ -106,13 +107,13 @@ by section 3.
 
 7. Open-source parts and other people's names
 
-BudPilot is built with open-source libraries, such as React Native and
+Shono is built with open-source libraries, such as React Native and
 Expo. Each library keeps its own license, and that license, not this one,
 covers the library. This license gives you no rights in those libraries
 beyond what their own licenses give.
 
-BudPilot is not made, approved or supported by any earbud maker or chip
-maker. Their names appear only to say which devices BudPilot works with,
+Shono is not made, approved or supported by any earbud maker or chip
+maker. Their names appear only to say which devices Shono works with,
 and they belong to their owners.
 
 
@@ -125,17 +126,17 @@ short part of the code in a review or a lesson.
 
 9. No warranty
 
-BudPilot is provided "as is" and "as available", without any warranty,
+Shono is provided "as is" and "as available", without any warranty,
 express or implied. This includes any warranty that it is fit for a
 particular purpose, works without errors, or works with your earbuds.
-BudPilot sends commands to your earbuds over Bluetooth. You use it at your
+Shono sends commands to your earbuds over Bluetooth. You use it at your
 own risk.
 
 
 10. Limit of liability
 
 As far as the law allows, the author is not liable for any loss or damage
-that comes from using BudPilot, or from not being able to use it. This
+that comes from using Shono, or from not being able to use it. This
 includes harm to earbuds or other devices, lost data and lost profits,
 whatever the legal reason for the claim. Some places do not allow these
 limits, so they apply only as far as the law where you live allows.
@@ -159,7 +160,7 @@ gives you, as a consumer, the right to use your own courts.
 13. New versions of this license
 
 The author may publish new versions of this license for future releases of
-BudPilot. Each release is covered by the license in this repository when
+Shono. Each release is covered by the license in this repository when
 that release came out. A new version never takes away rights you already
 had for an older release.
 
@@ -167,7 +168,7 @@ had for an older release.
 14. Other terms
 
 This license, together with any written permission from the author, is the
-whole agreement about BudPilot. If a court finds part of it unenforceable,
+whole agreement about Shono. If a court finds part of it unenforceable,
 the rest stays in force, and that part applies as far as it can. If the
 author does not act on a breach right away, the author can still act on it
 later. All rights not given in this license are kept by the author.

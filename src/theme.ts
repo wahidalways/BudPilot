@@ -63,6 +63,7 @@ export function makeColors(dark: boolean, accent: Accent) {
       hair: "rgba(20, 30, 50, 0.1)",
       stroke: "rgba(255, 255, 255, 0.7)",
       lens: "rgba(255, 255, 255, 0.92)",
+      hover: "rgba(255, 255, 255, 0.8)", // glass under the pointer: a step towards the lens
       side: "rgba(255, 255, 255, 0.42)",
       tint: hsl(h, s, 52, 0.16),
       tintEdge: hsl(h, s, 45, 0.45),
@@ -105,6 +106,7 @@ export function makeColors(dark: boolean, accent: Accent) {
     hair: "rgba(255, 255, 255, 0.09)",
     stroke: "rgba(255, 255, 255, 0.12)",
     lens: "rgba(255, 255, 255, 0.16)",
+    hover: "rgba(255, 255, 255, 0.09)",
     side: "rgba(255, 255, 255, 0.035)",
     tint: hsl(h, s, 60, 0.22),
     tintEdge: hsl(h, s, 65, 0.5),

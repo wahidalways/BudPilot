@@ -57,6 +57,14 @@ const ancLevelOf = (g: ArrayLike<number>) => (g.length >= 8 && u16(g, 0) ? u16(g
 /** The strength the earbuds have stored for a noise mode (what press and hold switches to), as a share of max. */
 export const storedAncLevel = (s: EarbudsState, mode: number) => (s.ancGains[mode] ? ancLevelOf(s.ancGains[mode]) : undefined);
 
+/** `s` with EQ mode `mode` playing `gains` (for the Custom slot, also what it stores). */
+export const withEq = (s: EarbudsState, mode: number, gains: number[]): EarbudsState => ({
+  ...s,
+  eqMode: mode,
+  eqGains: gains,
+  eqPresets: s.eqPresets.map((p) => (p.mode === mode ? { mode, gains } : p)),
+});
+
 /** Bit 7 = charging, low 7 bits = percent, 0 = not there (e.g. a bud outside the case's reach). */
 export const decodeBattery = (b: number): Battery => (b ? { percent: b & 0x7f, charging: (b & 0x80) !== 0 } : null);
 const batteries = (b: ArrayLike<number>) => ({ left: decodeBattery(b[0]), right: decodeBattery(b[1]), case: decodeBattery(b[2]) });
@@ -194,11 +202,7 @@ export class Earbuds {
   /** Selects EQ mode `mode` with these gains (dB); for the custom mode this also stores them. */
   async setEq(mode: number, gains: number[]) {
     await this.client.request(OP.setSysInfo, [0xff, ...tlv(ATTR.eq, [mode, ...gains.map((g) => g & 255)])]);
-    this.update({
-      eqMode: mode,
-      eqGains: gains,
-      eqPresets: this.state.eqPresets.map((p) => (p.mode === mode ? { mode, gains } : p)),
-    });
+    this.update(withEq(this.state, mode, gains));
   }
 
   /** Re-reads just the volume (cheap): the earbuds don't always announce a change from their volume taps. */
@@ -209,7 +213,7 @@ export class Earbuds {
 
   /** Sets one touch gesture, and only reports success once the earbuds hold it. They answer every settings change
    * with a result code (JieLi SDK: 0 done, 1 refused in game mode); in game (low-latency) mode they refuse touch
-   * changes, so BudPilot steps out of it for the change and straight back. */
+   * changes, so Shono steps out of it for the change and straight back. */
   async setKey(ear: number, taps: number, fn: number) {
     const send = async () => (await this.client.request(OP.setSettings, tlv(SETTING.keys, [ear, taps, fn])))[0] ?? 0;
     let code = await send();

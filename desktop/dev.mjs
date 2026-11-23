@@ -1,7 +1,9 @@
-// `npm run dev`: the live BudPilot in one command. Starts the Expo dev server (no browser tab), waits until it
-// answers, then opens the Electron window. Ctrl+C or quitting BudPilot from the tray stops both.
+// `npm run dev`: the live Shono in one command. Starts the Expo dev server (no browser tab), waits until it
+// answers, then opens the Electron window. Ctrl+C or quitting Shono from the tray stops both.
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+
+import { compileHelper } from "./helper/compile.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const desktop = fileURLToPath(new URL(".", import.meta.url));
@@ -40,5 +42,6 @@ else run("npx expo start --port 8081", root);
 console.log("Waiting for the dev server…");
 while (!(await isUp())) await new Promise((r) => setTimeout(r, 1000));
 
-console.log("Opening BudPilot (live). Edits in src/ show up in the window.");
+compileHelper(); // the Windows helper (desktop/helper): rebuilt only when helper.cs changed
+console.log("Opening Shono (live). Edits in src/ show up in the window.");
 run(["npx electron . --dev", ...process.argv.slice(2)].join(" "), desktop).on("exit", stop); // extra args go to Electron

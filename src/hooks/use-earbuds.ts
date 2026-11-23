@@ -1,20 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { connectEarbuds, hasKnownEarbuds } from "@/ble/connect";
+import { HOCO_EQ35 } from "@/devices/hoco-eq35";
 import { desktop } from "@/hooks/use-desktop";
 import type { Transport } from "@/jieli/client";
-import { Earbuds, type EarbudsState, noiseModeMask, storedAncLevel } from "@/jieli/earbuds";
+import { Earbuds, type EarbudsState, noiseModeMask, storedAncLevel, withEq } from "@/jieli/earbuds";
 import { addCorrection, type Correction } from "@/utils/corrections";
-import { byPressAndHold, caseChanged } from "@/utils/noise-switch";
+import { atSwitchOn, byPressAndHold, cameOnAbove, caseChanged } from "@/utils/noise-switch";
 import { loadPref, savePref } from "@/utils/prefs";
 
 type Status = "idle" | "connecting" | "connected" | "reconnecting";
 
-/** The noise setting the user picked in BudPilot; BudPilot puts it back when the earbuds change it by themselves. */
+/** The noise setting the user picked in Shono; Shono puts it back when the earbuds change it by themselves. */
 export type NoisePref = { mode: number; ncLevel: number; adaptive: boolean };
 
+/** ANC switched on, from Shono or by press and hold: always at Low (the user, 2026-11-23: "whenever I turn on ANC,
+ * I want the strength as low, always"). The strength can still change while it's on; the next switch-on is Low again. */
+export const ancOn = (): NoisePref => ({ mode: 1, ncLevel: HOCO_EQ35.ancLevels[0].level, adaptive: false });
+
 const REFRESH_MS = 3000;
-const VOLUME_MS = 500; // the volume alone, more often: a volume tap should show in Windows right away
+const VOLUME_MS = 500; // the volume alone, more often, while volume taps are on: a tap should show in Windows right away
 const RECONNECT_MS = 1000; // the earbuds switch ANC on ~3 s after power-up, so be connected before that
 const NOISE_KEY = "budpilot.noise";
 const STUCK_MS = 30_000; // an attempt this old has hung (Bluetooth can stall); allow a new one
@@ -42,7 +47,7 @@ const drifted = (s: EarbudsState, p?: NoisePref) =>
   !!s.ancGains[p.mode] &&
   (s.anc !== p.mode || (p.mode === 1 && !p.adaptive && s.ancLevel !== undefined && Math.abs(s.ancLevel - p.ncLevel) > 0.02));
 
-/** Every noise mode these earbuds have: the list press and hold cycles through (like Hoco's app). BudPilot used to
+/** Every noise mode these earbuds have: the list press and hold cycles through (like Hoco's app). Shono used to
  * shrink it to the kept mode, which left press and hold nothing to switch to. */
 const allModes = (e: Earbuds) => noiseModeMask([0, 1, 2].filter((m) => !!e.state.ancGains[m]));
 
@@ -64,7 +69,7 @@ export function useEarbuds() {
   const session = useRef<(t: Transport, how?: string) => Promise<void>>(undefined);
   const wanted = useRef(false); // the user wants to stay connected (false after Disconnect)
   const connecting = useRef(false); // one connection attempt at a time
-  // after Disconnect, BudPilot stops connecting by itself until Connect or its next start: never saved, so it can't
+  // after Disconnect, Shono stops connecting by itself until Connect or its next start: never saved, so it can't
   // get stuck off (the user wants it connected whenever the earbuds are)
   const paused = useRef(false);
   const droppedAt = useRef(0); // when the last link dropped
@@ -79,14 +84,25 @@ export function useEarbuds() {
   const connectingSince = useRef(0);
   const queue = useRef<Promise<void>>(Promise.resolve());
   const poll = useRef<ReturnType<typeof setInterval>>(undefined);
+  // only volume taps need the volume between full refreshes; a read costs a Bluetooth round trip (~1% of a core)
+  const volumeWatch = useRef(true);
+  const watchVolume = useCallback((on: boolean) => void (volumeWatch.current = on), []);
   const restoring = useRef(false);
   const [putting, setPutting] = useState<{ from: number; to: number }>(); // a put-back on its way
   const lastRestore = useRef(0);
   const undone = useRef(0);
   const pausedUntil = useRef(0);
   const ownChangeUntil = useRef(0);
-  const poweredAt = useRef(0); // when an earbud last powered up (BudPilot connected, or one left/entered the case)
+  const poweredAt = useRef(0); // when an earbud last powered up (Shono connected, or one left/entered the case)
   const lastBattery = useRef<EarbudsState["battery"]>(undefined);
+  const lastAnc = useRef<number>(undefined); // the noise mode last reported: tells ANC switching on from a strength change
+
+  /** Saves a new noise choice made for the user (ANC back to Low, a press and hold), without applying it. */
+  const keepChoice = useCallback((next: NoisePref) => {
+    pref.current = next;
+    setNoisePref(next);
+    savePref(NOISE_KEY, next);
+  }, []);
 
   /** Runs commands one at a time, in order, so quick slider moves aren't lost and refreshes never interleave. */
   const enqueue = useCallback((fn: () => Promise<void>) => {
@@ -95,7 +111,7 @@ export function useEarbuds() {
     return done;
   }, []);
 
-  /** Logs a put-back: what the earbuds switched to, what came back, and how long BudPilot took. */
+  /** Logs a put-back: what the earbuds switched to, what came back, and how long Shono took. */
   const record = useCallback((from: number, to: number, ms: number) => {
     setCorrections((list) => {
       const next = addCorrection(list, { at: Date.now(), from, to, ms });
@@ -115,7 +131,7 @@ export function useEarbuds() {
         const tookMs = Date.now() - startedAt; // how fast the earbuds switched back; the check below doesn't count
         await sleep(VERIFY_DELAY_MS);
         await e.refresh();
-        if (e.state.anc !== p.mode) throw new Error(`The earbuds didn't take ${MODE_NAMES[p.mode]} back yet. BudPilot keeps trying.`);
+        if (e.state.anc !== p.mode) throw new Error(`The earbuds didn't take ${MODE_NAMES[p.mode]} back yet. Shono keeps trying.`);
         record(from, p.mode, tookMs);
         setError(undefined);
         // the firmware may still be finishing its own switch (and syncing the other earbud): say it once more
@@ -135,20 +151,28 @@ export function useEarbuds() {
   const restoreIfDrifted = useCallback(
     (s: EarbudsState): EarbudsState => {
       const e = buds.current;
-      const p = pref.current;
       const now = Date.now();
       if (lastBattery.current && caseChanged(lastBattery.current, s.battery)) {
         poweredAt.current = now;
-        log(`earbuds: ${batteryText(s.battery)}`);
+        // only on a live link: while one opens, its batteries aren't read yet and would log as "gone"
+        if (e) log(`earbuds: ${batteryText(s.battery)}`);
       }
       lastBattery.current = s.battery;
+      // ANC switching on starts at Low, whoever switches it (see atSwitchOn)
+      const prevAnc = lastAnc.current;
+      lastAnc.current = s.anc;
+      const low = ancOn();
+      let p = pref.current;
+      if (p && atSwitchOn(p, prevAnc, s.anc, low) !== p) keepChoice((p = low));
+      if (!keepRef.current) {
+        // not kept: the earbuds' own switches stay, but ANC still comes on at Low
+        if (e && cameOnAbove(prevAnc, s.anc, s.ancLevel, low.ncLevel)) void enqueue(() => e.setAnc(1, low.ncLevel)).catch(() => {});
+        return s;
+      }
       // our own changes match the choice, so only the earbuds' own changes count as drift
-      if (!keepRef.current || !e || !p || !drifted(s, p) || now < pausedUntil.current || now < ownChangeUntil.current || restoring.current) return s;
+      if (!e || !p || !drifted(s, p) || now < pausedUntil.current || now < ownChangeUntil.current || restoring.current) return s;
       if (byPressAndHold(s.anc, p.mode, now - poweredAt.current, s.ancLevel, storedAncLevel(s, s.anc))) {
-        const next = { ...p, mode: s.anc };
-        pref.current = next;
-        setNoisePref(next);
-        savePref(NOISE_KEY, next);
+        keepChoice(s.anc === 1 ? low : { ...p, mode: s.anc }); // at another strength, the next check puts Low back
         return s;
       }
       undone.current = now - lastRestore.current < UNDONE_MS ? undone.current + 1 : 0;
@@ -161,7 +185,7 @@ export function useEarbuds() {
       void putBack(e, p, s.anc, now).catch((err) => setError(message(err)));
       return s;
     },
-    [putBack],
+    [putBack, keepChoice, enqueue],
   );
 
   /** Handshake, read everything, put the saved noise setting back, then keep in sync. */
@@ -194,8 +218,6 @@ export function useEarbuds() {
           }
         })();
       });
-      const p = pref.current;
-      const held = p && keepRef.current ? p : undefined;
       const e = await Earbuds.open(t, (s) => setState(restoreIfDrifted(s))).catch(async (err) => {
         await t.close();
         throw err;
@@ -212,10 +234,18 @@ export function useEarbuds() {
       lastFail.current = "";
       log(`connected (${how})${droppedAt.current ? `, ${secs(connectedAt.current - droppedAt.current)} after the last drop` : ""}: ${batteryText(e.state.battery)}`);
       if (__DEV__) (globalThis as { __earbuds?: Earbuds }).__earbuds = e; // inspect from DevTools
-      if (held && drifted(e.state, held)) {
+      // a new link counts as ANC switching on: the earbuds were in the case or out of reach, so ANC starts at Low
+      const low = ancOn();
+      lastAnc.current = e.state.anc;
+      const chosen = pref.current;
+      const p = chosen && atSwitchOn(chosen, 0, e.state.anc, low);
+      if (p && p !== chosen) keepChoice(p);
+      if (keepRef.current && p && drifted(e.state, p)) {
         const from = e.state.anc;
         const started = Date.now();
-        await enqueue(() => putBack(e, held, from, started)).catch((err) => setError(message(err)));
+        await enqueue(() => putBack(e, p, from, started)).catch((err) => setError(message(err)));
+      } else if (!keepRef.current && cameOnAbove(0, e.state.anc, e.state.ancLevel, low.ncLevel)) {
+        void enqueue(() => e.setAnc(1, low.ncLevel)).catch(() => {});
       }
       void enqueue(() => e.setNoiseModes(allModes(e))).catch(() => {}); // press and hold may use every mode
       // keep up with changes made by the earbud buttons or other apps; skips a beat if one is still running
@@ -225,8 +255,9 @@ export function useEarbuds() {
       clearInterval(poll.current);
       poll.current = setInterval(() => {
         if (refreshing || buds.current !== e) return;
-        refreshing = true;
         const full = ++tick % (REFRESH_MS / VOLUME_MS) === 0;
+        if (!full && !volumeWatch.current) return;
+        refreshing = true;
         void enqueue(() => (full ? e.refresh() : e.refreshVolume()))
           .then(() => {
             misses = 0;
@@ -243,13 +274,13 @@ export function useEarbuds() {
           .finally(() => (refreshing = false));
       }, VOLUME_MS);
     },
-    [enqueue, restoreIfDrifted, putBack, noteFail],
+    [enqueue, restoreIfDrifted, putBack, noteFail, keepChoice],
   );
   useEffect(() => {
     session.current = startSession; // the reconnect loop calls the latest one
   }, [startSession]);
 
-  /** `auto`: started by BudPilot itself; on failure it keeps waiting quietly instead of showing an error. */
+  /** `auto`: started by Shono itself; on failure it keeps waiting quietly instead of showing an error. */
   const connect = useCallback(
     async ({ auto = false } = {}) => {
       if (connecting.current) return;
@@ -277,7 +308,7 @@ export function useEarbuds() {
   );
 
   // The Windows shell calls this on start and every few seconds (with the user gesture Bluetooth scanning needs),
-  // so BudPilot connects by itself whenever the earbuds are around.
+  // so Shono connects by itself whenever the earbuds are around.
   useEffect(() => {
     (globalThis as { __budpilotAutoConnect?: () => void }).__budpilotAutoConnect = () => {
       if (connecting.current && Date.now() - connectingSince.current > STUCK_MS) connecting.current = false; // a hung attempt
@@ -337,6 +368,20 @@ export function useEarbuds() {
     [run],
   );
 
+  // EQ changes on their way to the earbuds. The screen shows them at once: until the earbuds have one, a refresh
+  // reports the old curve, which made a dragged curve jump back and the pills flash "Custom" (user, 2026-11-23).
+  const [eqSending, setEqSending] = useState<{ mode: number; gains: number[] }[]>([]);
+  /** Plays EQ mode `mode` with `gains` (for Custom, also stores them); shown straight away, in the order sent. */
+  const setEq = useCallback(
+    (mode: number, gains: number[]) => {
+      const w = { mode, gains };
+      setEqSending((l) => [...l, w]);
+      return run((e) => e.setEq(mode, gains))().finally(() => setEqSending((l) => l.filter((x) => x !== w)));
+    },
+    [run],
+  );
+  const shown = state && eqSending.reduce((s, w) => withEq(s, w.mode, w.gains), state);
+
   /** "Keep my noise setting": off lets the earbuds' firmware switch modes as it likes. */
   const setKeep = useCallback((on: boolean) => {
     keepRef.current = on;
@@ -344,5 +389,5 @@ export function useEarbuds() {
     savePref(KEEP_KEY, on);
   }, []);
 
-  return { status, state, error, busy: pending > 0, connect, disconnect, run, noisePref, setNoise, keep, setKeep, corrections, putting, pcLinked };
+  return { status, state: shown, error, busy: pending > 0, connect, disconnect, run, setEq, watchVolume, noisePref, setNoise, keep, setKeep, corrections, putting, pcLinked };
 }

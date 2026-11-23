@@ -1,4 +1,6 @@
-# BudPilot
+# Shono
+
+Shono (শোনো, Bangla for "listen") was called BudPilot until version 0.5.0.
 
 Control your Bluetooth earbuds from your phone and your PC: noise control, EQ and battery, without the maker's app.
 
@@ -6,13 +8,13 @@ Control your Bluetooth earbuds from your phone and your PC: noise control, EQ an
 
 ## Status
 
-Version 0.4.0, Windows first.
+Version 0.5.1, Windows first.
 
 - [x] Bluetooth handshake with JieLi-based earbuds, tested on a real HOCO EQ35 ANC
 - [x] Battery for each earbud and the case
 - [x] Noise control: off, noise cancelling (Low, Mid, High or Adaptive), transparency
-- [x] **Keeps your noise setting**: the earbuds switch to ANC by themselves every time they power up; BudPilot stops that
-- [x] EQ: Hoco's presets, plus a custom EQ with 10 sliders
+- [x] **Keeps your noise setting**: the earbuds switch to ANC by themselves every time they power up; Shono stops that
+- [x] EQ: Hoco's presets, a custom 10-band curve, and your own saved curves ("Movies", "Podcasts") to pick like presets
 - [x] Touch controls for each earbud
 - [x] Wear detection
 - [x] Game mode: lowest delay, turns on by itself for full-screen games, optional Footsteps EQ, and a latency check
@@ -21,9 +23,9 @@ Version 0.4.0, Windows first.
 
 ### Keeping your noise setting
 
-The earbuds' firmware turns ANC on by itself about a second after they power up, and again when they're put in or taken out. They can't be told to remember a mode. So BudPilot remembers it: when the firmware switches by itself, BudPilot switches back within a fraction of a second. A switch you make with press and hold on the earbuds becomes your new choice. This works while BudPilot is running, which is why it stays in the tray and can start with Windows.
+The earbuds' firmware turns ANC on by itself about a second after they power up, and again when they're put in or taken out. They can't be told to remember a mode. So Shono remembers it: when the firmware switches by itself, Shono switches back within a fraction of a second. A switch you make with press and hold on the earbuds becomes your new choice. This works while Shono is running, which is why it stays in the tray and can start with Windows.
 
-Adaptive noise cancelling is BudPilot's own too: the earbuds have no adaptive mode, so BudPilot picks Low, Mid or High from how loud the room is, using a microphone on the computer (never the earbuds'). Only the loudness is used; nothing is recorded.
+Adaptive noise cancelling is Shono's own too: the earbuds have no adaptive mode, so Shono picks Low, Mid or High from how loud the room is, using a microphone on the computer (never the earbuds'). Only the loudness is used; nothing is recorded.
 
 ### Game mode
 
@@ -55,14 +57,16 @@ npm test          # protocol tests
 
 The Windows app is the Expo web build inside an Electron window ([desktop/](desktop/)). It reaches the earbuds through Web Bluetooth.
 
-- Try changes live: `npm run dev`. It starts the Expo dev server, then opens BudPilot in live mode; edits in `src/` show up in the window. Ctrl+C, or Quit in the tray, stops both. Don't run the exe at the same time.
-- Build the app: `npm run desktop:build` writes `desktop/release/BudPilot-<version>.exe`, a portable app with no installer. The version comes from the root `package.json`.
+- Try changes live: `npm run dev`. It starts the Expo dev server, then opens Shono in live mode; edits in `src/` show up in the window. Ctrl+C, or Quit in the tray, stops both. Don't run the exe at the same time.
+- Build the app: `npm run desktop:build` writes `desktop/release/Shono-Setup-<version>.exe`, a per-user installer (no admin rights) that starts Shono when it's done. The version comes from the root `package.json`.
+- Earbud photos on the device card come from `public/device-photos/` (see its README.txt). They're the maker's artwork, so the folder is git-ignored: builds from this repo alone show the card without photos.
+- Windows-only watching (full-screen games, whether Windows has the earbuds, volume keys, the play/pause fix) runs in one small helper, [desktop/helper/helper.cs](desktop/helper/helper.cs). The build compiles it with the C# compiler that comes with Windows' .NET Framework, so nothing extra is needed.
 
-The exe isn't code-signed, so Windows SmartScreen may warn on first start: choose **More info**, then **Run anyway**.
+The installer isn't code-signed, so Windows SmartScreen may warn when you run it: choose **More info**, then **Run anyway**.
 
-Closing the window keeps BudPilot running in the tray (it needs to, to keep your noise setting). Use the tray icon to open it or quit. **Start with Windows** is on the Controls tab (and in the tray menu); a newer exe takes over Start with Windows from an older one by itself.
+Closing the window keeps Shono running in the tray (it needs to, to keep your noise setting). Use the tray icon to open it or quit. **Start with Windows** is on the Controls tab (and in the tray menu); a newer exe takes over Start with Windows from an older one by itself.
 
-BudPilot connects by itself whenever the earbuds are around. If it ever loses them, `%APPDATA%\BudPilot\connection.log` shows what happened: every connect and drop, when Windows connected the earbuds, whether they were advertising, and what they sent just before a drop.
+Shono connects by itself whenever the earbuds are around. If it ever loses them, `%APPDATA%\BudPilot\connection.log` shows what happened: every connect and drop, when Windows connected the earbuds, whether they were advertising, and what they sent just before a drop.
 
 ### Android app
 

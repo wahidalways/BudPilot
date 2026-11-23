@@ -25,9 +25,8 @@ Run lint and typecheck before declaring any task done.
 
 ## Navigation & Routing
 
-- Use **Expo Router** for all navigation. Routes live in `src/app/` — every file there is a screen, `_layout.tsx` files define navigators. Keep non-route code (components, hooks, utils) outside `src/app/`.
-- Import `Link`, `router`, and `useLocalSearchParams` from `expo-router`.
-- Docs: https://docs.expo.dev/router/introduction.md
+- Shono has one screen (`src/screens/home`: the tray flyout and the settings window are two views of it), so it has no router: `index.ts` registers `src/app.tsx`. Expo Router was removed to keep the Windows app light (465 KB of its 2 MB of JavaScript).
+- If the app ever needs real navigation, add **Expo Router** back (`npx expo install expo-router`, `"main": "expo-router/entry"`, routes in `src/app/`). Docs: https://docs.expo.dev/router/introduction.md
 
 ## Building with EAS
 

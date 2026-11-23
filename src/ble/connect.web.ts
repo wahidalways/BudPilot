@@ -28,7 +28,7 @@ export const hasKnownEarbuds = () => !!known;
  * `reuse` reconnects to the earbuds picked before, e.g. after they went back in the case. */
 export async function connectEarbuds({ reuse = false } = {}): Promise<Transport> {
   const bluetooth = (navigator as Navigator & { bluetooth?: Bluetooth }).bluetooth;
-  if (!bluetooth) throw new Error("Bluetooth isn't available here. Use the BudPilot app, Edge or Chrome.");
+  if (!bluetooth) throw new Error("Bluetooth isn't available here. Use the Shono app, Edge or Chrome.");
   let device: Device;
   if (reuse) {
     if (!known) throw new Error("No earbuds picked yet.");

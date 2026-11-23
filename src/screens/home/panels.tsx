@@ -5,15 +5,16 @@ import { Pressable, StyleSheet, View } from "react-native";
 import { HOCO_EQ35 as P } from "@/devices/hoco-eq35";
 import { canDetectGames } from "@/hooks/use-game-mode";
 import { ACCENTS, hsl, useColors, useTheme } from "@/theme";
-import { Button, Card, Seg, ToggleRow, Txt } from "@/ui/kit";
+import { Button, Card, Seg, TextBox, ToggleRow, Txt } from "@/ui/kit";
 import { seconds } from "@/utils/corrections";
-import { GAME_EQ } from "@/utils/game";
+import { GAME_EQ, GAME_EQ_NAME } from "@/utils/game";
+import { MAX_MY_EQS, MAX_NAME, nameProblem } from "@/utils/my-eqs";
 
 import appConfig from "../../../app.json"; // the version the builds use (expo-constants reported a stale one on web)
 
 import { EqCurve } from "./eq-curve";
 import { LatencyCheck } from "./latency-check";
-import { Credit, EqPills, FootstepsToggle, GameRow, NoiseControl } from "./parts";
+import { Credit, EqPills, GameEqPicker, GameRow, NoiseControl } from "./parts";
 import { type BudPilot, modeName } from "./use-bud-pilot";
 
 export function PanelHead({ title, lead }: { title: string; lead?: string }) {
@@ -92,21 +93,49 @@ export function SoundPanel({ b }: { b: BudPilot }) {
 
 const flat = () => P.eqBands.map(() => 0);
 
+// names a saved EQ can't take: what the pill row already shows
+const TAKEN = [...P.eqPresets.map((p) => p.name), "Custom", GAME_EQ_NAME];
+
+/** The EQ: pills to pick one, the curve, and the user's own saved EQs: "+ New" makes one from the current sound
+ * (flat when a preset plays) and selects it; dragging a saved EQ's curve saves into it. */
 export function EqualizerPanel({ b }: { b: BudPilot }) {
+  const c = useColors();
   const state = b.state!;
-  const [draft, setDraft] = useState<number[]>(); // what a drag shows before the earbuds confirm
+  const my = b.myEqs;
+  const [draft, setDraft] = useState<number[]>(); // what a drag shows while it lasts (sent when it ends)
+  const [naming, setNaming] = useState<{ id?: string; name: string; problem?: string }>(); // saving new, or renaming id
   const custom = P.customEqMode;
   const customOn = state.eqMode === custom;
   const stored = state.eqPresets.find((p) => p.mode === custom)?.gains;
   const gains = draft ?? (customOn ? state.eqGains : (stored ?? flat()));
   const isFlat = gains.every((g) => g === 0);
-  const save = (next: number[]) => {
-    setDraft(next);
-    void b.run((e) => e.setEq(custom, next))().finally(() => setDraft(undefined));
+  const playing = my.playing;
+  // a drag or an arrow key changes the saved EQ playing, if one is. It and the earbuds change in the same moment
+  // (setEq shows its curve at once), so the curve stays put and the same pill stays chosen; waiting for the earbuds
+  // here reset the next drag halfway (user, 2026-11-23)
+  const commit = (next: number[]) => {
+    if (playing) my.update(playing.id, next);
+    setDraft(undefined);
+    void b.setEq(custom, next);
+  };
+  const confirmName = () => {
+    if (!naming) return;
+    if (!naming.id && my.list.length >= MAX_MY_EQS) return setNaming({ ...naming, problem: `You can keep ${MAX_MY_EQS}. Delete one first.` });
+    const problem = nameProblem(naming.name, my.list, TAKEN, naming.id);
+    if (problem) return setNaming({ ...naming, problem });
+    if (naming.id) my.rename(naming.id, naming.name);
+    else my.saveAs(naming.name, customOn ? state.eqGains : flat()); // the current sound; a preset's lives in the firmware
+    setNaming(undefined);
+  };
+  // "+ New": a name to start from ("My EQ 2"), selected so typing replaces it
+  const startNew = () => {
+    let n = my.list.length + 1;
+    while (my.list.some((e) => e.name.toLowerCase() === `my eq ${n}`)) n++;
+    setNaming({ name: `My EQ ${n}` });
   };
 
-  // Game mode's Footsteps EQ borrows the Custom slot: show it as itself, and keep the user's Custom out of the way
-  if (b.game.footsteps)
+  // the built-in Game EQ borrows the Custom slot: show it as itself, and keep the user's Custom out of the way
+  if (b.game.builtIn)
     return (
       <>
         <PanelHead title="Equalizer" />
@@ -115,26 +144,66 @@ export function EqualizerPanel({ b }: { b: BudPilot }) {
           <EqCurve bands={P.eqBands} gains={GAME_EQ} max={P.eqMax} faded={false} readOnly onChange={() => {}} onCommit={() => {}} />
           <View style={s.row}>
             <Txt v="sub" style={s.grow}>
-              Plays while Game mode is on. Your EQ comes back after.
+              {GAME_EQ_NAME} plays while Game mode is on. Your EQ comes back after.
             </Txt>
-            <Button label="Turn off Footsteps EQ" onPress={() => b.game.update({ eq: false })} />
+            <Button label={`Turn off ${GAME_EQ_NAME}`} onPress={() => b.game.setEqOn(false)} />
           </View>
         </Card>
       </>
     );
 
+  const [status, actions] =
+    !customOn && !draft
+      ? ["Preset playing. Drag a point to make your own.", null]
+      : playing
+        ? [
+            `${playing.name} is playing. Drag the curve to change it.`,
+            <>
+              <Button label="Rename" onPress={() => setNaming({ id: playing.id, name: playing.name })} />
+              <Button label="Delete" onPress={() => my.remove(playing.id)} />
+            </>,
+          ]
+        : [
+            my.list.length ? "A curve that isn't saved yet" : "Your own curve, kept on the earbuds",
+            <>
+              <Button primary label="Save as…" onPress={() => setNaming({ name: "" })} />
+              {!isFlat && <Button label="Reset to flat" onPress={() => commit(flat())} />}
+            </>,
+          ];
+
   return (
     <>
-      <PanelHead title="Equalizer" />
-      <EqPills b={b} gains={gains} />
+      <PanelHead title="Equalizer" lead="Make your own EQs with + New and pick them like presets, here and in the tray." />
+      <EqPills b={b} onNew={startNew} />
       <Card>
-        <EqCurve bands={P.eqBands} gains={gains} max={P.eqMax} faded={!customOn && !draft} onChange={setDraft} onCommit={save} />
-        <View style={s.row}>
-          <Txt v="sub" style={s.grow}>
-            {customOn || draft ? "Saved on the earbuds" : "Preset playing. Drag a point for Custom."}
+        <EqCurve bands={P.eqBands} gains={gains} max={P.eqMax} faded={!customOn && !draft} onChange={setDraft} onCommit={commit} />
+        {naming ? (
+          <View style={s.row}>
+            <TextBox
+              label={naming.id ? "New name" : "Name for the new EQ"}
+              placeholder="Name it, e.g. Movies"
+              value={naming.name}
+              maxLength={MAX_NAME}
+              onChange={(name) => setNaming({ ...naming, name, problem: undefined })}
+              onSubmit={confirmName}
+              onCancel={() => setNaming(undefined)}
+            />
+            <Button primary label={naming.id ? "Rename" : "Save"} onPress={confirmName} />
+            <Button label="Cancel" onPress={() => setNaming(undefined)} />
+          </View>
+        ) : (
+          <View style={s.row}>
+            <Txt v="sub" style={s.grow}>
+              {status}
+            </Txt>
+            {actions}
+          </View>
+        )}
+        {naming?.problem && (
+          <Txt v="sub" style={{ color: c.danger }}>
+            {naming.problem}
           </Txt>
-          {customOn && !isFlat && <Button label="Reset to flat" onPress={() => save(flat())} />}
-        </View>
+        )}
       </Card>
     </>
   );
@@ -155,9 +224,18 @@ export function GamePanel({ b }: { b: BudPilot }) {
             onChange={(auto) => update({ auto })}
           />
         ) : (
-          <Txt v="sub">Turning on by itself for full-screen games needs BudPilot for Windows.</Txt>
+          <Txt v="sub">Turning on by itself for full-screen games needs Shono for Windows.</Txt>
         )}
-        <FootstepsToggle b={b} />
+      </Card>
+      <Card>
+        <ToggleRow
+          testID="game-eq-on"
+          title="EQ while gaming"
+          detail="Plays while Game mode is on (also the chip beside the switch in the tray); your own EQ comes back after."
+          value={b.game.prefs.eqOn}
+          onChange={b.game.setEqOn}
+        />
+        <GameEqPicker b={b} />
       </Card>
       <Card>
         <Txt v="title">Latency check</Txt>
@@ -223,7 +301,7 @@ export function AppPanel({ b }: { b: BudPilot }) {
         <Card>
           {startup.available &&
             (startup.on === null ? (
-              <Txt v="sub">Start with Windows works in the BudPilot app (the .exe), not in this live test window.</Txt>
+              <Txt v="sub">Start with Windows works in the Shono app (the .exe), not in this live test window.</Txt>
             ) : (
               <ToggleRow
                 title="Start with Windows"
@@ -234,7 +312,7 @@ export function AppPanel({ b }: { b: BudPilot }) {
             ))}
           {notice.available && (
             <ToggleRow
-              title="Tell me when BudPilot steps in"
+              title="Tell me when Shono steps in"
               detail="When it puts your noise setting back"
               value={notice.on}
               onChange={notice.setOn}
@@ -257,7 +335,7 @@ export function AppPanel({ b }: { b: BudPilot }) {
       </Card>
       <Card>
         <View>
-          <Txt v="title">BudPilot {appConfig.expo.version}</Txt>
+          <Txt v="title">Shono {appConfig.expo.version}</Txt>
           <Txt v="sub">Works with HOCO EQ35 ANC</Txt>
         </View>
         <Credit />

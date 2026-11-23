@@ -5,7 +5,7 @@ import { desktop } from "@/hooks/use-desktop";
 import { F, useColors } from "@/theme";
 import { Rim } from "@/ui/frost";
 import { NavIcon, WindowIcon } from "@/ui/icons";
-import { Mark, Txt } from "@/ui/kit";
+import { css, hovered, Mark, motion, Txt } from "@/ui/kit";
 
 import { AppPanel, EqualizerPanel, GamePanel, PanelHead, SoundPanel } from "./panels";
 import { batteryLine, ConnectState, ErrorNote } from "./parts";
@@ -24,7 +24,7 @@ type PanelKey = (typeof PANELS)[number]["key"];
 const WINDOW_BUTTONS = [
   { kind: "minimize", label: "Minimize" },
   { kind: "maximize", label: "Maximize" },
-  { kind: "close", label: "Close (BudPilot keeps running in the tray)" },
+  { kind: "close", label: "Close (Shono keeps running in the tray)" },
 ] as const;
 
 /** The page's own title bar: drag to move; the buttons look like Windows 11's. */
@@ -35,7 +35,7 @@ function TitleBar() {
     <View style={s.titleBar} {...({ dataSet: { drag: "1" } } as object)}>
       <View style={s.titleBrand}>
         <Mark size={18} />
-        <Text style={[s.titleText, { color: c.ink2 }]}>BudPilot</Text>
+        <Text style={[s.titleText, { color: c.ink2 }]}>Shono</Text>
       </View>
       {d && (
         <View style={s.winButtons}>
@@ -77,7 +77,7 @@ export function Settings({ b }: { b: BudPilot }) {
           {!narrow && (
             <View style={s.who}>
               <Txt v="name" numberOfLines={1}>
-                {b.state?.name ?? "BudPilot"}
+                {b.state?.name ?? "Shono"}
               </Txt>
               <Txt v="sub" numberOfLines={1}>
                 {connected ? batteryLine(b) : b.status === "reconnecting" ? "Waiting for your earbuds" : "Not connected"}
@@ -93,10 +93,10 @@ export function Settings({ b }: { b: BudPilot }) {
                 accessibilityRole="tab"
                 aria-selected={on}
                 onPress={() => setPanel(p.key)}
-                style={({ pressed }) => [
+                style={(state) => [
                   s.nav,
-                  on && { backgroundColor: c.lens, boxShadow: `${c.shine}, ${c.drop}` },
-                  !on && pressed && { backgroundColor: c.card },
+                  motion.control,
+                  on ? { backgroundColor: c.lens, boxShadow: `${c.shine}, ${c.drop}` } : (state.pressed || hovered(state)) && { backgroundColor: c.card },
                 ]}
               >
                 <NavIcon panel={p.key} color={on ? c.ink : c.ink2} />
@@ -108,14 +108,17 @@ export function Settings({ b }: { b: BudPilot }) {
 
         <ScrollView style={s.scroller} contentContainerStyle={s.content}>
           {connected && <ErrorNote b={b} />}
-          {needsEarbuds && !connected ? (
-            <>
-              <PanelHead title={page.label} />
-              <ConnectState b={b} />
-            </>
-          ) : (
-            <page.Panel b={b} />
-          )}
+          {/* keyed by page: each page rises in when it's picked */}
+          <View key={panel} style={s.enter}>
+            {needsEarbuds && !connected ? (
+              <>
+                <PanelHead title={page.label} />
+                <ConnectState b={b} />
+              </>
+            ) : (
+              <page.Panel b={b} />
+            )}
+          </View>
         </ScrollView>
       </View>
     </View>
@@ -140,4 +143,13 @@ const s = StyleSheet.create({
   nav: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 9, paddingHorizontal: 10, borderRadius: 12 },
   navText: { fontSize: 14, lineHeight: 19 },
   content: { paddingTop: 20, paddingBottom: 28, paddingHorizontal: 24, gap: 16, maxWidth: 760 },
+  // opacity and transform only (the compositor's), and nothing held after the end ("backwards"): a layer left on the
+  // page would cost its text ClearType
+  enter: css({
+    gap: 16,
+    animationKeyframes: [{ "0%": { opacity: 0, transform: "translateY(6px)" }, "100%": { opacity: 1, transform: "none" } }],
+    animationDuration: "220ms",
+    animationTimingFunction: "cubic-bezier(0.25, 0.8, 0.25, 1)",
+    animationFillMode: "backwards",
+  }),
 });
