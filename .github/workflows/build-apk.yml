@@ -1,0 +1,55 @@
+# Builds the Shono APKs on GitHub's machines (the Windows PC has no Java or Android SDK). Runs on every push to the
+# `android` branch, or from the Actions tab; the APKs are attached to the run.
+#   Shono-dev-*.apk      development build: the app's code comes live from `npx expo start` on the PC
+#   Shono-preview-*.apk  code built in, signed with the debug key: for testing only (releases get the real key later)
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [android]
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - run: npm ci
+
+      # The native project from app.json and the plugins, as EAS makes it.
+      - run: npx expo prebuild --platform android --no-install
+
+      # 64-bit ARM only (every current phone): half the build time and size
+      - name: Build the APKs
+        working-directory: android
+        run: ./gradlew assembleDebug assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+
+      - name: Name them
+        run: |
+          set -euo pipefail
+          V=$(node -p "require('./app.json').expo.version")
+          C=$(git rev-parse --short HEAD)
+          cp android/app/build/outputs/apk/debug/app-debug.apk "Shono-dev-$V-$C.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "Shono-preview-$V-$C.apk"
+          ls -la Shono-*.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shono-apk
+          path: Shono-*.apk
+          if-no-files-found: error

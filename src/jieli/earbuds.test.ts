@@ -5,17 +5,12 @@ import { jlAuthResponse } from "./auth.ts";
 import { RcspClient, type Transport } from "./client.ts";
 import { decodeSettings, decodeSysInfo, decodeWear, Earbuds, noiseModeMask } from "./earbuds.ts";
 import { encodeFrame, FrameReader } from "./rcsp.ts";
+import { CAPTURED_SETTINGS, CAPTURED_SYSINFO, sampleTransport } from "./sample.ts";
 
 const hex = (s: string) => Uint8Array.from(Buffer.from(s.replace(/\s+/g, ""), "hex"));
 
-// Captured from a real HOCO EQ35 ANC (in its case, charging) on 2026-11-22.
-const SETTINGS = hex(`04 00 e4 e4 5e 0e 01 48 4f 43 4f 20 45 51 33 35 20 41 4e 43 13 02 01 01 05 02 01 05 01 02 04 02 02 04
-  01 03 03 02 03 03 05 0a 00 00 00 07 02 04 01 02 05 01 07 06 05 d6 80 c0 e0 12`);
-const SYSINFO = hex(`ff 02 00 64 02 01 0c 0c 04 09 00 00 00 00 00 03 00 01 00 00 84 0c 0a 00 1e 00 3c 00 59 00 8c 00 ec 01 7c
-  0a 05 13 f9 22 c2 03 5c 00 f6 04 06 fe f9 fc 03 fe fd 04 01 fb 04 03 fa 03 fd 01 02 f9 fd 02 f6 03 05 fd f8 fb 03 ff 00 03
-  03 f6 ff 02 fc f9 00 03 ff f9 03 04 00 00 00 04 04 04 00 02 03 04 05 fe 00 00 02 02 00 00 00 04 04 06 00 00 00 00 00 00 00
-  00 00 00 07 00 00 00 00 00 00 00 00 00 00 08 00 00 00 00 00 00 00 00 00 00 09 00 00 00 00 00 03 00 01 00 00 0a 0d 00 00 00
-  00 00 00 00 00 00 1d 0e 03 00 00 00 00 00 00 00 00 00 01 40 00 40 00 40 00 40 00 02 40 00 40 00 40 00 40 00`);
+const SETTINGS = CAPTURED_SETTINGS;
+const SYSINFO = CAPTURED_SYSINFO;
 
 test("decodes real settings: name, batteries, work mode", () => {
   assert.deepEqual(decodeSettings(SETTINGS), {
@@ -193,4 +188,18 @@ test("sets the press-and-hold list in the format hoco.music uses", async () => {
   const e = await Earbuds.open(t, () => {});
   await e.setNoiseModes(noiseModeMask([0, 1, 2]));
   assert.equal(cmd(written.at(-1)!), "c0: 05 0a 00 00 00 07");
+});
+
+test("sample earbuds (Expo Go) open like real ones and keep what they're told", async () => {
+  const e = await Earbuds.open(sampleTransport(), () => {});
+  assert.equal(e.state.name, "HOCO EQ35 ANC");
+  assert.deepEqual(e.state.battery.left, { percent: 82, charging: false });
+  assert.deepEqual(e.state.battery.case, { percent: 54, charging: true });
+  await e.setAnc(2);
+  await e.setEq(9, [1, 2, 3, 0, 0, 0, 0, 0, -1, -2]);
+  await e.setKey(1, 2, 9);
+  await e.refresh(); // reads everything back from the sample
+  assert.equal(e.state.anc, 2);
+  assert.deepEqual(e.state.eqGains, [1, 2, 3, 0, 0, 0, 0, 0, -1, -2]);
+  assert.ok(e.state.keys.some((k) => k.ear === 1 && k.taps === 2 && k.fn === 9));
 });

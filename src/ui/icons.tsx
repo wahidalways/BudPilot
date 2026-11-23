@@ -13,7 +13,7 @@ function Line({ color, size = 18, strokeWidth = 1.7, children }: P & { children:
 }
 
 // an open ear (rim and inner curl; a closed outline read as a light bulb), on the right to leave room for sound
-const EAR = "M9.5 9a5.5 5.5 0 0 1 11 0c0 3.4-2.6 4.6-3.4 6.2-.7 1.5-.9 4.3-3.6 4.3a2.6 2.6 0 0 1-2.6-2.6M12.5 9.5a2.5 2.5 0 0 1 5 0c0 1.6-1.4 2-2 3.2";
+export const EAR = "M9.5 9a5.5 5.5 0 0 1 11 0c0 3.4-2.6 4.6-3.4 6.2-.7 1.5-.9 4.3-3.6 4.3a2.6 2.6 0 0 1-2.6-2.6M12.5 9.5a2.5 2.5 0 0 1 5 0c0 1.6-1.4 2-2 3.2";
 
 /** Noise control pictures: 0 off, 1 noise cancelling (a wall), 2 transparency (sound coming in). */
 export function NoiseIcon({ mode, ...p }: P & { mode: number }) {

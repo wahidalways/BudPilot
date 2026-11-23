@@ -1,0 +1,24 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.wahidalways.shono'
+version = '1.0.0'
+
+expoModule {
+  v2 true
+}
+
+android {
+  namespace "expo.modules.shonokeeper"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+dependencies {
+  // the headless JS task that keeps Shono's timers running in the background
+  implementation "com.facebook.react:react-android"
+}

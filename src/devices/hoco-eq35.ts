@@ -4,7 +4,7 @@ export const HOCO_EQ35 = {
   /** Custom slider range in Hoco's app (VerticalSeekBarView: -5..5), in dB either side of 0. */
   eqMax: 5,
   /** Product photos for the device card, served from public/device-photos when this computer has them (Hoco's
-   * artwork, kept off GitHub); the card shows no photos when they're missing. `aspect`: width / height. */
+   * artwork); the card shows no photos when they're missing. `aspect`: width / height. */
   photos: {
     left: { uri: "/device-photos/eq35/left.png", aspect: 420 / 600 },
     right: { uri: "/device-photos/eq35/right.png", aspect: 420 / 600 },

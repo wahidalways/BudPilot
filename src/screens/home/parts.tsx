@@ -40,18 +40,26 @@ export function useJustCorrected(corrections: Correction[]) {
   return latest && latest.at >= since && expired !== latest.at ? latest : undefined;
 }
 
-/** "Keeping Off" chip; flashes "Undid ANC 0.12 s" right after a put-back. Short and fixed-length, so it never widens the flyout. */
-export function KeepChip({ b }: { b: BudPilot }) {
-  const c = useColors();
-  const just = useJustCorrected(b.corrections);
-  if (!b.keep || !b.noisePref) return null;
+/** The keep chip's words, [lead, strong, tail]: "Keeping Off", "Putting ANC back", or "Undid ANC 0.12 s" right after a
+ * put-back (`loud`). Undefined when Shono isn't keeping a setting. */
+export function keepChipParts(b: BudPilot, just?: Correction) {
+  if (!b.keep || !b.noisePref) return undefined;
   const putting = b.putting;
-  const loud = !!just && !putting;
-  const [lead, strong, tail] = putting
+  const text: [string, string, string] = putting
     ? ["Putting ", modeName(putting.to), " back"]
     : just
       ? [`Undid ${modeName(just.from)} `, seconds(just.ms), ""]
       : ["Keeping ", keepText(b.noisePref), ""];
+  return { text, loud: !!just && !putting };
+}
+
+/** "Keeping Off" chip; flashes "Undid ANC 0.12 s" right after a put-back. Short and fixed-length, so it never widens the flyout. */
+export function KeepChip({ b }: { b: BudPilot }) {
+  const c = useColors();
+  const parts = keepChipParts(b, useJustCorrected(b.corrections));
+  if (!parts) return null;
+  const { loud } = parts;
+  const [lead, strong, tail] = parts.text;
   return (
     <View accessibilityLabel={`${lead}${strong}${tail}`} style={[s.chip, { backgroundColor: loud ? c.signalFill : c.tint, boxShadow: c.shine }]}>
       <Dot color={loud ? c.onSignal : c.signalFill} />
@@ -132,8 +140,8 @@ export function DeviceCard({ b }: { b: BudPilot }) {
   );
 }
 
-const MODE_SUBS = ["Normal listening", "Blocks the room", "Hear the room"];
-const STRENGTHS = [...P.ancLevels.map((l, i) => ({ value: String(i), label: l.name })), { value: "adaptive", label: "Adaptive" }];
+export const MODE_SUBS = ["Normal listening", "Blocks the room", "Hear the room"];
+export const STRENGTHS = [...P.ancLevels.map((l, i) => ({ value: String(i), label: l.name })), { value: "adaptive", label: "Adaptive" }];
 
 /** Off / ANC / Transparency, and the strength under ANC. The flyout's is one compact glass control whose lens glides
  * to the mode; `big`: the settings page's tiles. */
@@ -203,10 +211,13 @@ export function NoiseControl({ b, big }: { b: BudPilot; big?: boolean }) {
   );
 }
 
+/** One pill in a row of choices. */
+export type Choice = { key: string; label: string; on: boolean; onPress: () => void };
+
 /** Hoco's EQ presets, the user's saved EQs, then Custom: only while nothing is saved, or while the earbuds play a curve
  * that isn't saved (so the chosen pill always matches what plays). The gaming EQ isn't a pill (its chip sits beside
- * the Game mode switch); picking an EQ here while it plays turns it off and plays the pick. `onNew`: a "+ New" pill. */
-export function EqPills({ b, onNew }: { b: BudPilot; onNew?: () => void }) {
+ * the Game mode switch); picking an EQ here while it plays turns it off and plays the pick. */
+export function eqChoices(b: BudPilot): Choice[] {
   const state = b.state!;
   const g = b.game;
   const my = b.myEqs;
@@ -216,34 +227,32 @@ export function EqPills({ b, onNew }: { b: BudPilot; onNew?: () => void }) {
   // `curve`: for the Custom slot (saved EQs, Custom)
   const play = (mode: number, gains: number[], curve?: number[]) => (g.eqPlaying ? g.leaveGameEq(mode, curve) : void b.setEq(mode, gains));
   const unsaved = state.eqMode === custom && !my.playing && !g.builtIn; // a Custom curve that isn't a saved EQ
+  return [
+    ...P.eqPresets.map((p) => ({
+      key: `eq-${p.mode}`,
+      label: p.name,
+      on: !g.builtIn && state.eqMode === p.mode,
+      onPress: () => play(p.mode, p.gains ?? stored(p.mode) ?? flat()),
+    })),
+    ...my.list.map((e) => ({
+      key: `eq-my-${e.id}`,
+      label: e.name,
+      on: my.playing?.id === e.id,
+      onPress: () => (g.eqPlaying ? (my.pick(e.id), g.leaveGameEq(custom, e.gains)) : my.play(e)),
+    })),
+    ...(unsaved || !my.list.length
+      ? [{ key: `eq-${custom}`, label: "Custom", on: unsaved, onPress: () => (g.eqPlaying ? g.leaveGameEq(custom, my.customCurve()) : my.playCustom()) }]
+      : []),
+  ];
+}
+
+/** The EQ pills; `onNew`: a "+ New" pill at the end. */
+export function EqPills({ b, onNew }: { b: BudPilot; onNew?: () => void }) {
   return (
     <View style={s.pills} accessibilityRole="radiogroup" aria-label="Equalizer">
-      {P.eqPresets.map((p) => (
-        <Pill
-          key={p.name}
-          testID={`eq-${p.mode}`}
-          label={p.name}
-          on={!g.builtIn && state.eqMode === p.mode}
-          onPress={() => play(p.mode, p.gains ?? stored(p.mode) ?? flat())}
-        />
+      {eqChoices(b).map((ch) => (
+        <Pill key={ch.key} testID={ch.key} label={ch.label} on={ch.on} onPress={ch.onPress} />
       ))}
-      {my.list.map((e) => (
-        <Pill
-          key={e.id}
-          testID={`eq-my-${e.id}`}
-          label={e.name}
-          on={my.playing?.id === e.id}
-          onPress={() => (g.eqPlaying ? (my.pick(e.id), g.leaveGameEq(custom, e.gains)) : my.play(e))}
-        />
-      ))}
-      {(unsaved || !my.list.length) && (
-        <Pill
-          testID={`eq-${custom}`}
-          label="Custom"
-          on={unsaved}
-          onPress={() => (g.eqPlaying ? g.leaveGameEq(custom, my.customCurve()) : my.playCustom())}
-        />
-      )}
       {onNew && <Pill testID="eq-new" label="+ New" on={false} button onPress={onNew} />}
     </View>
   );
@@ -394,22 +403,32 @@ export function ErrorNote({ b }: { b: BudPilot }) {
   );
 }
 
-/** Which EQ the gaming EQ plays, for Settings: the built-in Game EQ, a preset or a saved EQ. */
-export function GameEqPicker({ b }: { b: BudPilot }) {
+/** Which EQ the gaming EQ plays: the built-in Game EQ, a preset or a saved EQ. */
+export function gameEqChoices(b: BudPilot): Choice[] {
   const { choice, setGameEq } = b.game;
+  return [
+    { key: "game-eq-builtin", label: GAME_EQ_NAME, on: choice.kind === "builtin", onPress: () => setGameEq({ kind: "builtin" }) },
+    ...P.eqPresets.map((p) => ({
+      key: `game-eq-${p.mode}`,
+      label: p.name,
+      on: choice.kind === "preset" && choice.mode === p.mode,
+      onPress: () => setGameEq({ kind: "preset", mode: p.mode }),
+    })),
+    ...b.myEqs.list.map((e) => ({
+      key: `game-eq-my-${e.id}`,
+      label: e.name,
+      on: choice.kind === "mine" && choice.id === e.id,
+      onPress: () => setGameEq({ kind: "mine", id: e.id }),
+    })),
+  ];
+}
+
+/** The gaming EQ picker, for Settings. */
+export function GameEqPicker({ b }: { b: BudPilot }) {
   return (
     <View style={s.pills} accessibilityRole="radiogroup" aria-label="Gaming EQ plays">
-      <Pill testID="game-eq-builtin" label={GAME_EQ_NAME} on={choice.kind === "builtin"} onPress={() => setGameEq({ kind: "builtin" })} />
-      {P.eqPresets.map((p) => (
-        <Pill
-          key={p.name}
-          label={p.name}
-          on={choice.kind === "preset" && choice.mode === p.mode}
-          onPress={() => setGameEq({ kind: "preset", mode: p.mode })}
-        />
-      ))}
-      {b.myEqs.list.map((e) => (
-        <Pill key={e.id} label={e.name} on={choice.kind === "mine" && choice.id === e.id} onPress={() => setGameEq({ kind: "mine", id: e.id })} />
+      {gameEqChoices(b).map((ch) => (
+        <Pill key={ch.key} testID={ch.key} label={ch.label} on={ch.on} onPress={ch.onPress} />
       ))}
     </View>
   );
