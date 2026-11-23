@@ -11,7 +11,7 @@ and the author. It is written in plain English on purpose.
 1. Words used in this license
 
 "Shono" means the Shono app (called BudPilot before November 2026) and
-everything in this repository (https://github.com/wahidalways/BudPilot): its
+everything in this repository (https://github.com/wahidalways/Shono): its
 source code, design, text,
 graphics, name and icons.
 
@@ -21,7 +21,7 @@ graphics, name and icons.
 group you act for.
 
 "An official build" means an APK, EXE or other installer published on this
-repository's Releases page (https://github.com/wahidalways/BudPilot/releases).
+repository's Releases page (https://github.com/wahidalways/Shono/releases).
 
 "A changed version" means anything made by changing, adding to, removing
 from, translating or repackaging Shono, other than the build settings
@@ -84,7 +84,7 @@ Unless the author gives you written permission, you may not:
 
 4. Asking for permission
 
-To ask, open an issue at https://github.com/wahidalways/BudPilot/issues and
+To ask, open an issue at https://github.com/wahidalways/Shono/issues and
 explain what you want to do. The author may say yes, say no, or set
 conditions such as credit or payment. No answer means no permission.
 
