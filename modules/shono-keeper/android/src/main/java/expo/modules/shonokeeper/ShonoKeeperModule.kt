@@ -56,11 +56,14 @@ class ShonoKeeperModule : Module() {
     }
 
     Function("stop") {
-      val context = appContext.reactContext ?: return@Function
-      context.stopService(Intent(context, KeeperService::class.java))
-      val id = taskId ?: return@Function
+      val context = appContext.reactContext
+      val id = taskId
       taskId = null
-      (context as? ReactContext)?.let { HeadlessJsTaskContext.getInstance(it).finishTask(id) }
+      if (context != null) {
+        context.stopService(Intent(context, KeeperService::class.java))
+        if (id != null) (context as? ReactContext)?.let { HeadlessJsTaskContext.getInstance(it).finishTask(id) }
+      }
+      Unit
     }
   }
 
