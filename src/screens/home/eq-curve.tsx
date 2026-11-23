@@ -176,7 +176,9 @@ export function EqCurve({
                 {gains[i] !== 0 && (
                   <SvgText
                     x={px}
-                    y={gains[i] < 0 ? py + 24 : py - 14} // cuts label below their point, clear of the 0 line
+                    // a cut's label goes below its point, clear of the 0 line; near the bottom it goes above, clear of the
+                    // band names
+                    y={gains[i] < 0 && py + 18 <= H - B ? py + 24 : py - 14}
                     textAnchor="middle"
                     fontFamily={F.semibold}
                     fontSize={11}

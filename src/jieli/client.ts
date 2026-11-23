@@ -1,3 +1,4 @@
+import { later } from "../utils/later.ts";
 import { jlAuthResponse } from "./auth.ts";
 import { ALLOWED_CUSTOM, BLOCKED_OPS, encodeFrame, FLAG_COMMAND, FLAG_WANTS_REPLY, FrameReader, OP } from "./rcsp.ts";
 
@@ -10,7 +11,7 @@ export interface Transport {
   close(): Promise<void>;
 }
 
-type Pending = { resolve: (data: Uint8Array) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; op: number };
+type Pending = { resolve: (data: Uint8Array) => void; reject: (e: Error) => void; cancel: () => void; op: number };
 
 const PASS = [0x02, 0x70, 0x61, 0x73, 0x73]; // 02 "pass"
 const hex = (n: number) => n.toString(16).padStart(2, "0").toUpperCase();
@@ -57,13 +58,13 @@ export class RcspClient {
   private send(op: number, data: number[], ms: number): Promise<Uint8Array> {
     const sn = (this.sn = (this.sn + 1) & 0xff);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const cancel = later(() => {
         this.pending.delete(sn);
         reject(new Error(`The earbuds did not answer command ${hex(op)}.`));
       }, ms);
-      this.pending.set(sn, { resolve, reject, timer, op });
+      this.pending.set(sn, { resolve, reject, cancel, op });
       this.t.write(encodeFrame(FLAG_COMMAND | FLAG_WANTS_REPLY, op, [sn, ...data])).catch((e) => {
-        clearTimeout(timer);
+        cancel();
         this.pending.delete(sn);
         reject(e);
       });
@@ -72,12 +73,12 @@ export class RcspClient {
 
   private exchange(bytes: number[], ms = 5000): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const cancel = later(() => {
         this.rawWaiter = undefined;
         reject(new Error("The earbuds did not answer the handshake."));
       }, ms);
       this.rawWaiter = (b) => {
-        clearTimeout(timer);
+        cancel();
         resolve(b);
       };
       this.t.write(Uint8Array.from(bytes)).catch(reject);
@@ -101,7 +102,7 @@ export class RcspClient {
       const [status, sn] = f.payload;
       const p = this.pending.get(sn);
       if (!p) continue;
-      clearTimeout(p.timer);
+      p.cancel();
       this.pending.delete(sn);
       if (status === 0) p.resolve(f.payload.subarray(2));
       else p.reject(new Error(`The earbuds refused command ${hex(p.op)} (status ${status}).`));

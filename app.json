@@ -2,7 +2,7 @@
   "expo": {
     "name": "Shono",
     "slug": "BudPilot",
-    "version": "0.5.1",
+    "version": "0.6.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "budpilot",
@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "com.wahidalways.budpilot",
-      "versionCode": 7,
+      "versionCode": 8,
       "adaptiveIcon": {
         "backgroundColor": "#2C5DC9",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -41,7 +41,25 @@
           "isBleRequired": true
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-audio",
+        {
+          "recordAudioAndroid": false,
+          "enableBackgroundPlayback": false,
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "extraProguardRules": "# Shono: native code looked up by name at runtime (Bluetooth, blur, SVG, Shono's own module, Expo modules)\n-keep class it.innove.** { *; }\n-keep class eightbitlab.com.blurview.** { *; }\n-keep class com.horcrux.svg.** { *; }\n-keep class expo.modules.** { *; }\n-dontwarn eightbitlab.com.blurview.**"
+          }
+        }
+      ]
     ],
     "experiments": {
       "reactCompiler": true

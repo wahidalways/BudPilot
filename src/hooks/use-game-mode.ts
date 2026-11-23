@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { AppState } from "react-native";
 
 import { HOCO_EQ35 as P } from "@/devices/hoco-eq35";
 import type { Earbuds, EarbudsState } from "@/jieli/earbuds";
 import { GAME_EQ_NAME, type GameEq, gameEqSteps, gameTarget, readGameEq, type SavedEq } from "@/utils/game";
 import type { MyEq } from "@/utils/my-eqs";
 import { loadPref, savePref } from "@/utils/prefs";
+
+import { hasUsageAccess, keeperAvailable, onGameChanged, openUsageAccess, watchGames } from "../../modules/shono-keeper";
 
 /** What Game mode does: lowest delay, and (if `eqOn`) a gaming EQ while it's on: `eq`, the built-in Game EQ unless
  * the user chose a preset or a saved EQ; their own EQ comes back after. Noise control is not part of it: the Sound
@@ -25,8 +28,8 @@ type Deps = {
   myEqs: MyEq[];
 };
 
-/** True in the Windows app, which tells Shono when a full-screen game is running. */
-export const canDetectGames = () => typeof navigator !== "undefined" && /Electron/.test(navigator.userAgent ?? "");
+/** True in the Windows app (full-screen games) and the Android app (a game in front, with Usage access). */
+export const canDetectGames = () => (typeof navigator !== "undefined" && /Electron/.test(navigator.userAgent ?? "")) || keeperAvailable();
 
 export function useGameMode({ state, connected, run, setEq, myEqs }: Deps) {
   const [prefs, setPrefs] = useState<GamePrefs>(() => {
@@ -46,6 +49,26 @@ export function useGameMode({ state, connected, run, setEq, myEqs }: Deps) {
       if (!on) setAutoPaused(false);
     };
   }, []);
+
+  // Android: a game in front works like Windows' full-screen games; Android tells which app is in front only with
+  // Usage access (looked at again whenever Shono comes back, e.g. from Android's page to allow it)
+  const [usage, setUsage] = useState(hasUsageAccess);
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => s === "active" && setUsage(hasUsageAccess()));
+    return () => sub.remove();
+  }, []);
+  useEffect(() => {
+    if (!keeperAvailable() || !usage || !prefs.auto || !connected) return;
+    watchGames(true);
+    const sub = onGameChanged(({ playing }) => {
+      setFullscreen(playing);
+      if (!playing) setAutoPaused(false);
+    });
+    return () => {
+      sub.remove();
+      watchGames(false);
+    };
+  }, [usage, prefs.auto, connected]);
 
   const byGame = prefs.auto && fullscreen && !autoPaused;
   const active = prefs.manual || byGame;
@@ -130,5 +153,8 @@ export function useGameMode({ state, connected, run, setEq, myEqs }: Deps) {
     setGameEq,
     setEqOn,
     leaveGameEq,
+    /** Android: whether Shono may see which app is in front, and Android's page to allow it */
+    usage,
+    allowUsage: openUsageAccess,
   };
 }

@@ -183,6 +183,19 @@ test("refuses custom commands that aren't on the allow list", async () => {
   await assert.rejects(c.request(0xff, [0xff, 0xfd, 0xf6, 0x02]), /blocked/);
 });
 
+test("plays and stops the find sound with the bytes hoco.music sends", async () => {
+  const { t, written } = fakeEarbuds();
+  const e = await Earbuds.open(t, () => {});
+  await e.findSound("left");
+  assert.equal(cmd(written.at(-1)!), "19: 01 01 00 3c 01 01");
+  await e.findSound("right");
+  assert.equal(cmd(written.at(-1)!), "19: 01 01 00 3c 02 01");
+  await e.findSound("both");
+  assert.equal(cmd(written.at(-1)!), "19: 01 01 00 3c 00 01");
+  await e.findSound("off");
+  assert.equal(cmd(written.at(-1)!), "19: 01 00 00 3c 00 01");
+});
+
 test("sets the press-and-hold list in the format hoco.music uses", async () => {
   const { t, written } = fakeEarbuds();
   const e = await Earbuds.open(t, () => {});

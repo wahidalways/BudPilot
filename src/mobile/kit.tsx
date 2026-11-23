@@ -1,16 +1,19 @@
 // Phone and tablet building blocks, from the design (artifacts/shono-mobile-tablet.html). Motion runs on the UI thread
 // with Reanimated springs and only moves transform and opacity, so it stays smooth on mid-range phones.
+import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Haptics from "expo-haptics";
-import { type ReactNode, useEffect, useState } from "react";
-import { Pressable, type PressableProps, type StyleProp, StyleSheet, Text, type TextProps, View, type ViewStyle } from "react-native";
+import { type ComponentRef, type ReactNode, useEffect, useRef, useState } from "react";
+import { Pressable, type PressableProps, ScrollView, type StyleProp, StyleSheet, Text, type TextProps, View, type ViewStyle } from "react-native";
 import Animated, { useAnimatedStyle, useReducedMotion, useSharedValue, withDelay, withSpring, withTiming } from "react-native-reanimated";
 
 import { F, useColors } from "@/theme";
 
-/** A soft spring with a small overshoot: lenses, gliders, switch knobs. */
-export const SPRING = { dampingRatio: 0.72, duration: 520 } as const;
+import { useSurface } from "./glass";
+
+/** A quick spring with a small overshoot: lenses, gliders, switch knobs. */
+export const SPRING = { dampingRatio: 0.68, duration: 380 } as const;
 /** Snappier, for press feedback. */
-const PRESS = { dampingRatio: 0.6, duration: 260 } as const;
+const PRESS = { dampingRatio: 0.55, duration: 190 } as const;
 
 export const T = StyleSheet.create({
   big: { fontFamily: F.display, fontSize: 30, lineHeight: 36, letterSpacing: -0.6 },
@@ -34,7 +37,7 @@ export const tick = () => void Haptics.selectionAsync().catch(() => {}); // a li
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 /** Anything pressable: sinks a little under the finger and springs back. */
-export function Press({ style, children, scale = 0.97, ...rest }: PressableProps & { style?: StyleProp<ViewStyle>; scale?: number; children: ReactNode }) {
+export function Press({ style, children, scale = 0.96, ...rest }: PressableProps & { style?: StyleProp<ViewStyle>; scale?: number; children: ReactNode }) {
   const down = useSharedValue(1);
   const reduce = useReducedMotion();
   const a = useAnimatedStyle(() => ({ transform: [{ scale: down.get() }] }));
@@ -57,8 +60,8 @@ export function Press({ style, children, scale = 0.97, ...rest }: PressableProps
 }
 
 export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
-  const c = useColors();
-  return <View style={[s.card, { backgroundColor: c.raised, borderColor: c.hair }, style]}>{children}</View>;
+  const f = useSurface();
+  return <View style={[s.card, { backgroundColor: f.bg, borderColor: f.edge, boxShadow: f.shine }, style]}>{children}</View>;
 }
 
 /** A card's heading line: the title, then anything on its right (a chip, a link). */
@@ -84,7 +87,7 @@ export function Seg<V extends string | number>({
   small,
   tall,
 }: {
-  options: { value: V; label: string; icon?: (color: string) => ReactNode }[];
+  options: { value: V; label: string; icon?: (color: string, on: boolean) => ReactNode }[];
   value: V | undefined;
   onChange: (v: V) => void;
   label: string;
@@ -101,10 +104,10 @@ export function Seg<V extends string | number>({
   const shown = useSharedValue(0);
   const reduce = useReducedMotion();
   useEffect(() => {
-    if (!segW || i < 0) return void shown.set(withTiming(0, { duration: 160 }));
+    if (!segW || i < 0) return void shown.set(withTiming(0, { duration: 120 }));
     const first = shown.get() === 0;
     x.set(first || reduce ? i * segW : withSpring(i * segW, SPRING));
-    shown.set(withTiming(1, { duration: 160 }));
+    shown.set(withTiming(1, { duration: 120 }));
   }, [i, segW, reduce, x, shown]);
   const lens = useAnimatedStyle(() => ({ opacity: shown.get(), transform: [{ translateX: x.get() }] }));
   const radius = tall ? 16 : small ? 9 : 12;
@@ -151,7 +154,7 @@ export function Seg<V extends string | number>({
             }}
             style={[s.segBtn, { minHeight: tall ? 72 : small ? 34 : 40 }]}
           >
-            {o.icon?.(color)}
+            {o.icon?.(color, on)}
             <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={[small ? T.small : T.strong, { fontSize: small ? 13 : 14, color }]}>
               {o.label}
             </Text>
@@ -180,8 +183,8 @@ export function Switch({ value, onChange, label }: { value: boolean; onChange: (
       accessibilityLabel={label}
       accessibilityState={{ checked: value }}
       hitSlop={8}
-      onPressIn={() => held.set(withTiming(1, { duration: 140 }))}
-      onPressOut={() => held.set(withTiming(0, { duration: 180 }))}
+      onPressIn={() => held.set(withTiming(1, { duration: 100 }))}
+      onPressOut={() => held.set(withTiming(0, { duration: 140 }))}
       onPress={() => {
         tick();
         onChange(!value);
@@ -255,6 +258,69 @@ export function ToggleRow({ title, detail, value, onChange, first }: { title: st
   );
 }
 
+/** A row that scrolls sideways (EQ pills, Game EQ chips) and shows there's more: where it continues, the edge fades and
+ * a small arrow scrolls it on; both go once that end is reached (the user: people must see they can swipe for more).
+ * It reaches the card's edges (`edge`: the card's padding), so the pills run under them. */
+export function ScrollRow({ children, edge = 16, label }: { children: ReactNode; edge?: number; label?: string }) {
+  const c = useColors();
+  const row = useRef<ComponentRef<typeof ScrollView>>(null);
+  const [w, setW] = useState(0);
+  const [content, setContent] = useState(0);
+  const [x, setX] = useState(0);
+  const after = content - w - x > 4;
+  const before = x > 4;
+  const by = (dir: number) => row.current?.scrollTo({ x: Math.max(0, x + dir * w * 0.7), animated: true });
+  // the fade ends in the card's colour (solid enough to read the arrow over it)
+  const solid = c.dark ? "rgba(24, 26, 31," : "rgba(250, 251, 253,";
+  const side = (dir: number) => (
+    <View pointerEvents="box-none" style={[s.fade, dir < 0 ? s.fadeLeft : s.fadeRight, { backgroundImage: `linear-gradient(to ${dir < 0 ? "right" : "left"}, ${solid} 0.96) 40%, ${solid} 0))` }]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={dir < 0 ? "Scroll back" : "More"}
+        hitSlop={8}
+        onPress={() => {
+          tick();
+          by(dir);
+        }}
+        style={({ pressed }) => [s.arrow, { backgroundColor: pressed ? c.hair : c.well, borderColor: c.hair }]}
+      >
+        <Ionicons name={dir < 0 ? "chevron-back" : "chevron-forward"} size={15} color={c.ink} />
+      </Pressable>
+    </View>
+  );
+  return (
+    <View style={{ marginHorizontal: -edge }} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
+      <ScrollView
+        ref={row}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        accessibilityLabel={label}
+        contentContainerStyle={[s.scrollRow, { paddingHorizontal: edge }]}
+        onContentSizeChange={(cw) => setContent(cw)}
+        onScroll={(e) => setX(e.nativeEvent.contentOffset.x)}
+        scrollEventThrottle={32}
+      >
+        {children}
+      </ScrollView>
+      {before && side(-1)}
+      {after && side(1)}
+    </View>
+  );
+}
+
+/** A way to a fuller page, in the accent with a chevron: "Edit ›" on the EQ, "More ›" on a tablet's tiles. */
+export function Link({ label, onPress, accessibilityLabel }: { label: string; onPress: () => void; accessibilityLabel?: string }) {
+  const c = useColors();
+  return (
+    <Press accessibilityRole="link" accessibilityLabel={accessibilityLabel ?? label} onPress={onPress} hitSlop={10} style={s.link}>
+      <Txt v="strong" style={{ color: c.signalInk, fontSize: 14 }}>
+        {label}
+      </Txt>
+      <Ionicons name="chevron-forward" size={15} color={c.signalInk} />
+    </Press>
+  );
+}
+
 /** A small tinted label: "Keeping ANC Low"; `busy` while Shono is putting something back. */
 export function Chip({ children, busy, quiet }: { children: ReactNode; busy?: boolean; quiet?: boolean }) {
   const c = useColors();
@@ -267,14 +333,14 @@ export function Chip({ children, busy, quiet }: { children: ReactNode; busy?: bo
   );
 }
 
-/** Fades and rises into place when it first appears; `k` staggers a group (one after another, 60 ms apart). */
+/** Fades and rises into place when it first appears; `k` staggers a group (one after another, 40 ms apart). */
 export function Rise({ k = 0, children, style }: { k?: number; children: ReactNode; style?: StyleProp<ViewStyle> }) {
   const p = useSharedValue(0);
   const reduce = useReducedMotion();
   useEffect(() => {
-    p.set(reduce ? 1 : withDelay(60 + k * 60, withSpring(1, { dampingRatio: 0.9, duration: 560 })));
+    p.set(reduce ? 1 : withDelay(20 + k * 40, withSpring(1, { dampingRatio: 0.78, duration: 420 })));
   }, [p, reduce, k]);
-  const a = useAnimatedStyle(() => ({ opacity: p.get(), transform: [{ translateY: (1 - p.get()) * 14 }] }));
+  const a = useAnimatedStyle(() => ({ opacity: Math.min(1, p.get() * 1.4), transform: [{ translateY: (1 - p.get()) * 12 }] }));
   return <Animated.View style={[style, a]}>{children}</Animated.View>;
 }
 
@@ -291,4 +357,10 @@ const s = StyleSheet.create({
   btn: { height: 46, paddingHorizontal: 18, borderRadius: 14, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   row: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 60, paddingVertical: 8 },
   chip: { height: 28, paddingHorizontal: 10, borderRadius: 14, justifyContent: "center", maxWidth: 200 },
+  link: { flexDirection: "row", alignItems: "center", gap: 2, minHeight: 32 },
+  scrollRow: { gap: 8 },
+  fade: { position: "absolute", top: 0, bottom: 0, width: 64, justifyContent: "center" },
+  fadeLeft: { left: 0, alignItems: "flex-start", paddingLeft: 8 },
+  fadeRight: { right: 0, alignItems: "flex-end", paddingRight: 8 },
+  arrow: { width: 28, height: 28, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, alignItems: "center", justifyContent: "center" },
 });

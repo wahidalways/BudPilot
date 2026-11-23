@@ -1,10 +1,19 @@
-// The phone and tablet app: tabs (phone) or a side rail with the earbuds beside the page (tablet), pages that slide in
-// from the side of the tab you picked, the App sheet, and the note when Shono puts your noise setting back.
-import { type ComponentRef, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
+// The phone and tablet app: tabs and pages that slide in from the side of the tab you picked (phones, and tablets held
+// upright, in a column up to 760 wide, the Dashboard on Home), or on a tablet held sideways the Dashboard with every
+// setting inline and App settings in a side panel (dashboard.tsx); the App sheet, and the note when Shono puts your
+// noise setting back. The phone's
+// bars are glass over the pages, so they sit outside the blur target that holds them. The top uses a collapsing title
+// (the user's pick): nothing covers the top of a page, the gear stays put, and Frost glass fades in once you scroll.
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { BlurTargetView } from "expo-blur";
+import { NavigationBar } from "expo-navigation-bar";
+import { type ComponentProps, type ComponentRef, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { BackHandler, Pressable, ScrollView, StatusBar, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import Animated, {
   Easing,
+  FadeIn,
   interpolate,
+  type SharedValue,
   useAnimatedScrollHandler,
   useAnimatedStyle,
   useReducedMotion,
@@ -15,21 +24,27 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { type BudPilot, modeName, useBudPilot } from "@/screens/home/use-bud-pilot";
-import { F, useColors } from "@/theme";
-import { BudsIcon, GearIcon, NavIcon } from "@/ui/icons";
+import { F, useColors, useTheme } from "@/theme";
 import { seconds } from "@/utils/corrections";
+import { later } from "@/utils/later";
 import { loadPref, savePref } from "@/utils/prefs";
 
-import { DeviceCard, HomeCards, NoiseCard, type TourRefs } from "./home";
+import { EarbudsGlyph } from "./art";
+import { askBackgroundUnrestricted, backgroundUnrestricted } from "../../modules/shono-keeper";
+import { FindPage } from "./find";
+import { DashboardBoard, EDGE, SidePanel, TabletBar } from "./dashboard";
+import { HomeCards, markWelcomed, type TourRefs } from "./home";
+import { BluetoothGate } from "./bluetooth-gate";
+import { Backdrop, FrostBar, Glass, PageActive, useGround } from "./glass";
 import { useKeeper } from "./keeper";
 import { Mark, Onboarding, type Rect, Tour, type TourStop } from "./onboarding";
-import { SPRING, tick, Txt } from "./kit";
+import { Button, Press, tick, Txt } from "./kit";
 import { AppContent, EqPage, GamePage, SoundPage, TouchPage } from "./pages";
 import { Sheet, Toast } from "./sheet";
 
 type ViewNode = ComponentRef<typeof View>;
 type ScrollNode = ComponentRef<typeof ScrollView>;
-type Tab = "home" | "sound" | "eq" | "game" | "touch" | "app";
+type Tab = "home" | "sound" | "eq" | "game" | "touch" | "find" | "app";
 const PHONE_TABS: [Tab, string][] = [
   ["home", "Home"],
   ["sound", "Sound"],
@@ -37,24 +52,35 @@ const PHONE_TABS: [Tab, string][] = [
   ["game", "Game"],
   ["touch", "Touch"],
 ];
-const TABLET_TABS: [Tab, string][] = [
-  ["sound", "Sound"],
-  ["eq", "EQ"],
-  ["game", "Game"],
-  ["touch", "Touch"],
-  ["app", "App"],
-];
-const TITLES: Record<Tab, string> = { home: "Shono", sound: "Sound", eq: "Equalizer", game: "Game", touch: "Touch controls", app: "App" };
+// a phone's pages: its tabs, and Find, which opens from Home (the Home tab stays lit there)
+const PHONE_PAGES: [Tab, string][] = [...PHONE_TABS, ["find", "Find"]];
+const COLUMN = 760; // an upright tablet's content column
+const BAR = 56; // the top bar's height under the status bar; the large titles sit on its middle line
+const COLLAPSE = 44; // scrolling this far turns a page's large title into the bar's small one
+const SMALL = 17; // the collapsed title's size
+const TITLE_H = 40; // the large title's line, the same in the bar and in the page (where a gap holds its place)
+const TITLES: Record<Tab, string> = { home: "Shono", sound: "Sound", eq: "Equalizer", game: "Game", touch: "Touch controls", find: "Find my earbuds", app: "App" };
 const LEDES: Partial<Record<Tab, string>> = {
   sound: "What the room sounds like in your ears.",
   game: "Lowest audio delay, for games and videos.",
   touch: "What each tap does. Saved on the earbuds.",
+  find: "Play a sound, or see where they were last.",
   app: "Look and feel, and the earbuds Shono talks to.",
 };
-const barColor = (dark: boolean) => (dark ? "rgb(17,19,24)" : "rgb(244,245,248)");
 
-const TabIcon = ({ tab, color }: { tab: Tab; color: string }) =>
-  tab === "home" ? <BudsIcon color={color} size={22} strokeWidth={1.8} /> : <NavIcon panel={tab} color={color} size={22} />;
+// Apple-style glyphs (Ionicons), as in iOS tab bars: an outline at rest, filled when chosen. Home is the earbuds
+// (drawn in art.tsx to match): the page is about them, and the user didn't like a house.
+type Glyph = ComponentProps<typeof Ionicons>["name"];
+const GLYPHS: Record<Exclude<Tab, "home">, [Glyph, Glyph]> = {
+  sound: ["ear-outline", "ear"],
+  eq: ["options-outline", "options"],
+  game: ["game-controller-outline", "game-controller"],
+  touch: ["hand-left-outline", "hand-left"],
+  find: ["location-outline", "location"],
+  app: ["settings-outline", "settings"],
+};
+const TabIcon = ({ tab, on, color }: { tab: Tab; on: boolean; color: string }) =>
+  tab === "home" ? <EarbudsGlyph on={on} color={color} size={27} /* a touch larger: the buds are slimmer than their neighbours */ /> : <Ionicons name={GLYPHS[tab][on ? 1 : 0]} size={25} color={color} />;
 
 // What the Windows shell does every few seconds: connect whenever the earbuds are around. Not during the first run: its
 // Connect step asks for Bluetooth access first, then connects.
@@ -62,13 +88,19 @@ function useAutoConnect(on: boolean) {
   useEffect(() => {
     if (!on) return;
     const auto = () => (globalThis as { __budpilotAutoConnect?: () => void }).__budpilotAutoConnect?.();
-    auto();
-    const t = setInterval(auto, 5000);
-    return () => clearInterval(t);
+    let cancel = () => {};
+    const tick = () => {
+      auto();
+      cancel = later(tick, 5000);
+    };
+    tick();
+    return () => cancel();
   }, [on]);
 }
 
+
 const ONBOARDED_KEY = "budpilot.onboarded";
+const LIMITS_KEY = "budpilot.offeredUnlimited"; // "Run without limits" was offered once
 type Note = { title: string; sub: string; at: number };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const inWindow = (v: ViewNode | null) =>
@@ -80,15 +112,17 @@ function useTourRefs(): TourRefs {
   const noise = useRef<ViewNode>(null);
   const eq = useRef<ViewNode>(null);
   const game = useRef<ViewNode>(null);
-  return { stack, device, noise, eq, game };
+  const touch = useRef<ViewNode>(null);
+  return { stack, device, noise, eq, game, touch };
 }
 const STOPS = {
   device: ["Your earbuds", "Battery for each earbud and the case. A green number means it's charging."],
   noise: ["Noise control", "Choose Off, ANC or Transparency. ANC starts at Low; pick a stronger level just below it."],
   eq: ["Equalizer", "Tap a preset or one of your own EQs. Edit opens the full curve."],
   game: ["Game mode", "Cuts audio delay for games and videos. Game EQ can play while it's on."],
+  touch: ["Touch controls", "What each tap on an earbud does. Tap one to change it; it's saved on the earbuds."],
   tabs: ["Everything else", "Sound, EQ, Game and Touch each have a tab. The gear holds theme, accent and this tour."],
-  rail: ["Everything else", "Sound, EQ, Game, Touch and App each have a page in this rail."],
+  gear: ["Everything else", "Every setting is on this board. The gear holds theme, colour and this tour."],
 } as const;
 
 /** "Put Off back · 0.12 s", for a put-back that happens while Shono is open (when "Tell me when Shono steps in" is on). */
@@ -103,7 +137,8 @@ function usePutBackNote(b: BudPilot) {
   };
 }
 
-/** A page: slides in from the side of its tab and fades, scrolls under a top bar that fills in as you scroll. */
+/** A page: slides in from the side of its tab and fades. While it's the one showing, `barY` follows its scroll (the
+ * phone's top bar fills in from it). */
 function Page({
   active,
   dir,
@@ -111,8 +146,10 @@ function Page({
   lede,
   top,
   bottom,
-  bar,
+  barY,
+  titleInBar = true,
   scrollRef,
+  edge = 16,
   children,
 }: {
   active: boolean;
@@ -121,104 +158,198 @@ function Page({
   lede?: string;
   top: number;
   bottom: number;
-  bar?: ReactNode;
+  barY?: SharedValue<number>;
+  titleInBar?: boolean;
   scrollRef?: RefObject<ScrollNode | null>;
+  edge?: number;
   children: ReactNode;
 }) {
-  const c = useColors();
-  const insets = useSafeAreaInsets();
   const reduce = useReducedMotion();
+  const [opened, setOpened] = useState(active); // built the first time it's shown (a faster start, less memory)
+  if (active && !opened) setOpened(true);
   const p = useSharedValue(active ? 1 : 0);
   useEffect(() => {
-    p.set(reduce ? (active ? 1 : 0) : active ? withTiming(1, { duration: 340, easing: Easing.out(Easing.cubic) }) : withTiming(0, { duration: 160 }));
+    p.set(reduce ? (active ? 1 : 0) : active ? withTiming(1, { duration: 240, easing: Easing.out(Easing.cubic) }) : withTiming(0, { duration: 110 }));
   }, [active, reduce, p]);
-  const move = useAnimatedStyle(() => ({ opacity: p.get(), transform: [{ translateX: (1 - p.get()) * dir * 28 }] }));
+  const move = useAnimatedStyle(() => ({ opacity: p.get(), transform: [{ translateX: (1 - p.get()) * dir * 22 }] }));
   const y = useSharedValue(0);
+  const shown = useSharedValue(active);
+  useEffect(() => {
+    shown.set(active);
+    if (active) barY?.set(y.get()); // the bar takes this page's scroll when you switch to it
+  }, [active, shown, barY, y]);
   const onScroll = useAnimatedScrollHandler((e) => {
     y.set(e.contentOffset.y);
+    if (shown.get()) barY?.set(e.contentOffset.y);
   });
-  const barFill = useAnimatedStyle(() => ({ opacity: interpolate(y.get(), [0, 28], [0, 1], "clamp") }));
-  const small = useAnimatedStyle(() => ({
-    opacity: interpolate(y.get(), [26, 50], [0, 1], "clamp"),
-    transform: [{ translateY: interpolate(y.get(), [26, 50], [6, 0], "clamp") }],
-  }));
   return (
     <Animated.View pointerEvents={active ? "auto" : "none"} accessibilityElementsHidden={!active} importantForAccessibility={active ? "auto" : "no-hide-descendants"} style={[StyleSheet.absoluteFill, move]}>
-      <Animated.ScrollView ref={scrollRef} onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingTop: top, paddingBottom: bottom, paddingHorizontal: 16 }}>
-        {title && (
+      <Animated.ScrollView
+        ref={scrollRef}
+        onScroll={barY ? onScroll : undefined}
+        // no snapping to open or closed: it caught flings from the top and pulled the page back (the user). The title
+        // simply follows the scroll and may rest half-collapsed.
+        scrollEventThrottle={16}
+        contentContainerStyle={{ paddingTop: top, paddingBottom: bottom, paddingHorizontal: edge }}
+      >
+        {barY && titleInBar && title ? (
+          // the large title is drawn by the top bar, over this gap
+          <View style={s.titles}>
+            <View style={{ height: TITLE_H }} />
+            {lede ? <Txt v="sub" style={s.lede}>{lede}</Txt> : null}
+          </View>
+        ) : title ? (
           <View style={s.titles}>
             <Txt v="big" accessibilityRole="header">
               {title}
             </Txt>
             {lede ? <Txt v="sub" style={s.lede}>{lede}</Txt> : null}
           </View>
-        )}
-        {children}
+        ) : null}
+        <PageActive value={active}>{opened ? children : null}</PageActive>
       </Animated.ScrollView>
-      {bar !== undefined && (
-        <View pointerEvents="box-none" style={[s.bar, { height: insets.top + 56, paddingTop: insets.top }]}>
-          <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: barColor(c.dark), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.hair }, barFill]} />
-          {bar ?? (
-            <Animated.Text style={[s.barTitle, { color: c.ink }, small]} numberOfLines={1}>
-              {title}
-            </Animated.Text>
-          )}
-        </View>
-      )}
     </Animated.View>
   );
 }
 
-/** The phone's tab bar: a tinted pill glides to the chosen tab, whose icon pops. */
-function TabBar({ tabs, cur, onTab, navRef }: { tabs: [Tab, string][]; cur: Tab; onTab: (t: Tab) => void; navRef: RefObject<ViewNode | null> }) {
+/** The phone's top bar, a collapsing title that morphs: at the top of a page its large title sits at the left (on Home,
+ * Shono's mark and name), with the gear at the right and no bar behind them. As you scroll, the title shrinks and glides
+ * into the middle with your finger, Home's mark fades away, and Frost glass fades in behind. Transform and opacity
+ * only, driven by the scroll on the UI thread. */
+function TopBar({
+  title,
+  home,
+  back,
+  y,
+  target,
+  onGear,
+  edge = 16,
+}: {
+  title: string;
+  home: boolean;
+  back?: () => void;
+  y: SharedValue<number>;
+  target: RefObject<ViewNode | null>;
+  onGear: () => void;
+  edge?: number;
+}) {
   const c = useColors();
   const insets = useSafeAreaInsets();
-  const reduce = useReducedMotion();
-  const [w, setW] = useState(0);
-  const tw = w ? (w - 20) / tabs.length : 0;
-  const i = tabs.findIndex((t) => t[0] === cur);
-  const x = useSharedValue(-1);
-  useEffect(() => {
-    if (!tw) return;
-    x.set(x.get() < 0 || reduce ? i * tw : withSpring(i * tw, SPRING));
-  }, [i, tw, reduce, x]);
-  const glide = useAnimatedStyle(() => ({ opacity: x.get() < 0 ? 0 : 1, transform: [{ translateX: Math.max(0, x.get()) }] }));
+  const { width } = useWindowDimensions();
+  const big = home ? 21 : 30; // Home's name is smaller beside its mark
+  const inset = edge - 16; // an upright tablet's column starts further in
+  const left = (home ? 58 : 20) + inset; // where the large title starts: the page's text edge, or after Home's mark
+  const w = useSharedValue(0); // the large title's width, for centring it
+  const fill = useAnimatedStyle(() => ({ opacity: interpolate(y.get(), [4, 22], [0, 1], "clamp") }));
+  const morph = useAnimatedStyle(() => {
+    const p = interpolate(y.get(), [0, COLLAPSE], [0, 1], "clamp");
+    const k = 1 - p * (1 - SMALL / big);
+    return { transform: [{ translateX: p * (width / 2 - left - (w.get() * k) / 2) }, { scale: k }] };
+  });
+  const mark = useAnimatedStyle(() => {
+    const p = interpolate(y.get(), [0, COLLAPSE * 0.6], [0, 1], "clamp");
+    return { opacity: 1 - p, transform: [{ scale: 1 - p * 0.3 }] };
+  });
+  // with a Back row, the page keeps its large title; a small one fades in once it has scrolled under the bar
+  const small = useAnimatedStyle(() => ({
+    opacity: interpolate(y.get(), [40, 64], [0, 1], "clamp"),
+    transform: [{ translateY: interpolate(y.get(), [40, 64], [6, 0], "clamp") }],
+  }));
+  const pick = c.dark ? c.signalInk : c.signal;
   return (
-    <View
-      ref={navRef}
-      collapsable={false}
-      accessibilityRole="tablist"
-      onLayout={(e) => setW(e.nativeEvent.layout.width)}
-      style={[s.tabbar, { paddingBottom: insets.bottom + 8, backgroundColor: barColor(c.dark), borderTopColor: c.hair }]}
-    >
-      {tw > 0 && (
-        <Animated.View pointerEvents="none" style={[s.glide, { width: tw }, glide]}>
-          <View style={[s.glidePill, { backgroundColor: c.tint }]} />
+    <View pointerEvents="box-none" style={[s.bar, { height: insets.top + BAR, paddingTop: insets.top, paddingHorizontal: 10 + inset }]}>
+      <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, fill]}>
+        <FrostBar target={target} style={StyleSheet.absoluteFill} />
+      </Animated.View>
+      {back ? (
+        <>
+          <Press accessibilityRole="button" accessibilityLabel="Back to Home" hitSlop={6} onPress={back} style={[s.back, { top: insets.top, left: 6 + inset }]}>
+            <Ionicons name="chevron-back" size={24} color={pick} />
+            <Text style={[s.backLabel, { color: pick }]}>Home</Text>
+          </Press>
+          <Animated.Text pointerEvents="none" numberOfLines={1} style={[s.smallTitle, { top: insets.top, color: c.ink }, small]}>
+            {title}
+          </Animated.Text>
+        </>
+      ) : null}
+      {home && (
+        <Animated.View pointerEvents="none" style={[s.barMark, { top: insets.top + (BAR - 30) / 2, left: 18 + inset }, mark]}>
+          <Mark />
         </Animated.View>
       )}
-      {tabs.map(([k, label]) => {
-        const on = k === cur;
-        const color = on ? c.signalInk : c.ink2;
+      {back ? null : (
+      <Animated.Text
+        key={title}
+        entering={FadeIn.duration(220)}
+        pointerEvents="none"
+        accessibilityRole="header"
+        numberOfLines={1}
+        onLayout={(e) => w.set(e.nativeEvent.layout.width)}
+        style={[s.bigTitle, { left, top: insets.top + (BAR - TITLE_H) / 2, fontSize: big, letterSpacing: home ? -0.3 : -0.6, color: c.ink }, morph]}
+      >
+        {title}
+      </Animated.Text>
+      )}
+      <Pressable accessibilityRole="button" accessibilityLabel="App settings" hitSlop={6} onPress={onGear} style={s.gear}>
+        <Ionicons name="settings-outline" size={24} color={c.ink} />
+      </Pressable>
+    </View>
+  );
+}
+
+/** The phone's tab bar (the Edge bar): full-width glass over the page with a crisp hairline on top. The chosen tab is
+ * in the accent with its icon filled in, and the icon pops; the others are dark outlines. The glass is denser than the
+ * cards: Android's blur can't lift colour the way iOS's does, so a thin milky tint read as a grey haze (the user:
+ * "washed out"). */
+function TabBar({
+  tabs,
+  cur,
+  lit,
+  onTab,
+  navRef,
+  target,
+}: {
+  tabs: [Tab, string][];
+  cur: Tab;
+  lit: Tab;
+  onTab: (t: Tab) => void;
+  navRef: RefObject<ViewNode | null>;
+  target: RefObject<ViewNode | null>;
+}) {
+  const c = useColors();
+  const insets = useSafeAreaInsets();
+  const pick = c.dark ? c.signalInk : c.signal;
+  const rest = c.dark ? "rgba(236, 238, 243, 0.74)" : "rgba(21, 24, 32, 0.74)"; // the other tabs: ink, a step back
+  return (
+    <View ref={navRef} collapsable={false} accessibilityRole="tablist" style={[s.tabbar, { paddingBottom: insets.bottom + 10 }]}>
+      <Glass target={target} radius={0} flat fill={c.dark ? "rgba(16, 17, 20, 0.88)" : "rgba(252, 252, 254, 0.86)"} style={StyleSheet.absoluteFill} />
+      <View pointerEvents="none" style={[s.rim, { backgroundColor: c.dark ? "rgba(255, 255, 255, 0.1)" : "rgba(20, 30, 50, 0.1)" }]} />
+      <View style={s.tabs}>
+        {tabs.map(([k, label]) => {
+        const on = k === lit;
+        const color = on ? pick : rest;
         return (
-          <Pressable
+          <Press
             key={k}
+            scale={0.9}
             accessibilityRole="tab"
             accessibilityState={{ selected: on }}
             accessibilityLabel={label}
             onPress={() => {
-              if (on) return;
+              if (k === cur) return;
               tick();
               onTab(k);
             }}
             style={s.tab}
           >
             <Pop on={on}>
-              <TabIcon tab={k} color={color} />
+              <TabIcon tab={k} on={on} color={color} />
             </Pop>
-            <Text style={[s.tabLabel, { color }]}>{label}</Text>
-          </Pressable>
+            <Text style={[s.tabLabel, { color }, on && s.tabLabelOn]}>{label}</Text>
+          </Press>
         );
-      })}
+        })}
+      </View>
     </View>
   );
 }
@@ -229,107 +360,75 @@ function Pop({ on, children }: { on: boolean; children: ReactNode }) {
   const reduce = useReducedMotion();
   useEffect(() => {
     if (!on || reduce) return;
-    p.set(0.82);
-    p.set(withSpring(1, { dampingRatio: 0.5, duration: 420 }));
+    p.set(0.84);
+    p.set(withSpring(1, { dampingRatio: 0.45, duration: 320 }));
   }, [on, reduce, p]);
   const a = useAnimatedStyle(() => ({ transform: [{ scale: p.get() }] }));
   return <Animated.View style={[s.tabIcon, a]}>{children}</Animated.View>;
 }
 
-/** The tablet's side rail: Shono's mark, then the pages, with the same gliding pill. */
-function Rail({ tabs, cur, onTab, navRef }: { tabs: [Tab, string][]; cur: Tab; onTab: (t: Tab) => void; navRef: RefObject<ViewNode | null> }) {
-  const c = useColors();
-  const insets = useSafeAreaInsets();
-  const reduce = useReducedMotion();
-  const i = tabs.findIndex((t) => t[0] === cur);
-  const y = useSharedValue(i * 70);
-  useEffect(() => y.set(reduce ? i * 70 : withSpring(i * 70, SPRING)), [i, reduce, y]);
-  const glide = useAnimatedStyle(() => ({ transform: [{ translateY: y.get() }] }));
-  return (
-    <View style={[s.rail, { paddingTop: insets.top + 18, backgroundColor: c.dark ? c.window : c.surface, borderRightColor: c.hair }]}>
-      <Mark size={40} />
-      <View ref={navRef} collapsable={false} accessibilityRole="tablist" style={s.railTabs}>
-        <Animated.View pointerEvents="none" style={[s.railGlide, { backgroundColor: c.tint }, glide]} />
-        {tabs.map(([k, label]) => {
-          const on = k === cur;
-          const color = on ? c.signalInk : c.ink2;
-          return (
-            <Pressable
-              key={k}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: on }}
-              accessibilityLabel={label}
-              onPress={() => {
-                if (on) return;
-                tick();
-                onTab(k);
-              }}
-              style={s.railTab}
-            >
-              <Pop on={on}>
-                <TabIcon tab={k} color={color} />
-              </Pop>
-              <Text style={[s.tabLabel, { color }]}>{label}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
-    </View>
-  );
-}
-
 export function MobileApp() {
-  const c = useColors();
+  const { c, look } = useTheme();
+  const full = look.fullScreen !== false;
   const b = useBudPilot();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const tablet = Math.min(width, height) >= 600;
-  const wide = tablet && width >= 960; // landscape tablets keep the earbuds pane beside the page
-  const tabs = tablet ? TABLET_TABS : PHONE_TABS;
-  const [picked, setTab] = useState<Tab>("home");
-  const cur = tabs.some((t) => t[0] === picked) ? picked : tabs[0][0]; // e.g. Home after turning a tablet
+  const sideways = tablet && width > height; // the board on one screen; held upright, a tablet works like a phone
+  const edge = tablet ? Math.max(24, Math.round((width - COLUMN) / 2)) : 16;
+  const tabs = PHONE_TABS;
+  const pages = PHONE_PAGES;
+  const [cur, setTab] = useState<Tab>("home");
   const [last, setLast] = useState({ cur, prev: cur }); // the tab before, so a new page slides in from its side
   if (last.cur !== cur) setLast({ cur, prev: last.cur });
+  const [panel, setPanel] = useState(false); // sideways: App settings over the board
   const [appOpen, setAppOpen] = useState(false);
   const [onboarded, setOnboarded] = useState(() => !!loadPref<boolean>(ONBOARDED_KEY));
   const [tour, setTour] = useState<TourStop[]>(); // the stops, while the tour runs
   const [msg, setMsg] = useState<Note>();
   useAutoConnect(onboarded);
-  useKeeper(b, onboarded);
+  const keeperOn = useKeeper(b, onboarded);
   const putBack = usePutBackNote(b);
   const note = msg && (!putBack || msg.at > putBack.at) ? msg : putBack;
   const reduce = useReducedMotion();
 
   // the tour: where each card is (scrolled into view first), on whichever layout is showing
-  const homeRefs = useTourRefs(); // the phone's Home, or the tablet's earbuds pane
-  const stripDevice = useRef<ViewNode>(null); // the portrait tablet's strip
-  const stripNoise = useRef<ViewNode>(null);
+  const homeRefs = useTourRefs(); // the phone's Home, or the tablet's Dashboard
   const homeScroll = useRef<ScrollNode>(null);
-  const navRef = useRef<ViewNode>(null);
-  const topPad = tablet ? insets.top + 18 : insets.top + 60;
-  const card = (refs: TourRefs, key: "device" | "noise" | "eq" | "game", scroll: boolean) => async () => {
-    const t = refs[key].current;
-    const stack = refs.stack.current;
-    if (scroll && t && stack) {
-      homeScroll.current?.scrollTo({ y: Math.max(0, topPad + (await offsetIn(t, stack)) - 120), animated: !reduce });
-      await sleep(reduce ? 60 : 450);
+  const navRef = useRef<ViewNode>(null); // the tab bar, or sideways the gear
+  const glassTarget = useRef<ViewNode>(null); // what the bars blur: everything under them
+  const barY = useSharedValue(0); // how far the page showing has scrolled
+  const ground = useGround();
+  const topPad = insets.top + 8;
+  // a card already in view is shown at once; otherwise it's scrolled into view first (the tour used to scroll and
+  // wait half a second at every stop: the user, "it takes a second before it moves")
+  const card = (key: "device" | "noise" | "eq" | "game" | "touch") => async () => {
+    const t = homeRefs[key].current;
+    const stack = homeRefs.stack.current;
+    const now = await inWindow(t);
+    const top = insets.top + (sideways ? 76 : BAR);
+    const bottom = height - insets.bottom - (sideways ? 8 : 80); // above the tab bar
+    // in view: all of it, or at least its top 200 (a tall card can't show whole; the spotlight needs no more)
+    if (now && now.y >= top - 8 && now.y + Math.min(now.h, 200) <= bottom + 8) return now;
+    if (t && stack) {
+      homeScroll.current?.scrollTo({ y: Math.max(0, (sideways ? 0 : topPad) + (await offsetIn(t, stack)) - 120), animated: !reduce });
+      await sleep(reduce ? 40 : 300);
     }
     return inWindow(t);
   };
   const stop = (key: keyof typeof STOPS, locate: TourStop["locate"], radius?: number): TourStop => ({ title: STOPS[key][0], body: STOPS[key][1], locate, radius });
   // built when the tour starts (the stops find their cards then, through refs)
-  const tourStops = (): TourStop[] =>
-    tablet && !wide
-      ? [stop("device", () => inWindow(stripDevice.current)), stop("noise", () => inWindow(stripNoise.current)), stop("rail", () => inWindow(navRef.current), 20)]
-      : [
-          stop("device", card(homeRefs, "device", true)),
-          stop("noise", card(homeRefs, "noise", true)),
-          stop("eq", card(homeRefs, "eq", true)),
-          stop("game", card(homeRefs, "game", true)),
-          tablet ? stop("rail", () => inWindow(navRef.current), 20) : stop("tabs", () => inWindow(navRef.current), 0),
-        ];
+  const tourStops = (): TourStop[] => [
+    stop("device", card("device")),
+    stop("noise", card("noise")),
+    stop("eq", card("eq")),
+    stop("game", card("game")),
+    ...(tablet ? [stop("touch", card("touch"))] : []),
+    sideways ? stop("gear", () => inWindow(navRef.current), 24) : stop("tabs", () => inWindow(navRef.current), 0),
+  ];
   const startTour = () => {
     setAppOpen(false);
+    setPanel(false);
     setTab("home");
     setTimeout(() => setTour(tourStops()), 500);
   };
@@ -340,6 +439,7 @@ export function MobileApp() {
   };
   const firstRunDone = (tour: boolean) => {
     savePref(ONBOARDED_KEY, true);
+    markWelcomed();
     setOnboarded(true);
     setTab("home");
     if (tour) setTimeout(() => setTour(tourStops()), 650);
@@ -347,69 +447,80 @@ export function MobileApp() {
   };
   const firstRunAgain = () => {
     setAppOpen(false);
+    setPanel(false);
     savePref(ONBOARDED_KEY, false);
     setOnboarded(false);
   };
 
-  // Back on a phone goes Home first, then leaves the app (sheets close themselves)
+  // "Run without limits", offered once: the first time Shono's background service runs (Keep my noise setting or Last
+  // seen), not during the tour. Android may otherwise pause Shono in the background. Always in App settings too.
+  const [limitsAsk, setLimitsAsk] = useState(false);
+  useEffect(() => {
+    if (!keeperOn || tour || loadPref<boolean>(LIMITS_KEY) || backgroundUnrestricted()) return;
+    return later(() => {
+      savePref(LIMITS_KEY, true);
+      setLimitsAsk(true);
+    }, 1500);
+  }, [keeperOn, tour]);
+
+  // Back closes the side panel (sideways), or goes Home first (phones, upright tablets), then leaves the app; sheets
+  // close themselves
   useEffect(() => {
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (tablet || cur === "home") return false;
+      if (sideways) {
+        if (!panel) return false;
+        setPanel(false);
+        return true;
+      }
+      if (cur === "home") return false;
       setTab("home");
       return true;
     });
     return () => sub.remove();
-  }, [tablet, cur]);
+  }, [sideways, panel, cur]);
 
   const ui = { tablet };
   const content = (k: Tab) =>
     ({
-      home: <HomeCards b={b} onEdit={() => setTab("eq")} refs={homeRefs} />,
+      home: (
+        <>
+          <View style={{ height: TITLE_H, marginBottom: 12 }} /* the top bar draws Home's mark and name over this */ />
+          {tablet ? (
+            <DashboardBoard b={b} sideways={false} width={width} refs={homeRefs} tablet />
+          ) : (
+            <HomeCards b={b} onEdit={() => setTab("eq")} onFind={() => setTab("find")} refs={homeRefs} />
+          )}
+        </>
+      ),
       sound: <SoundPage b={b} />,
       eq: <EqPage b={b} ui={ui} />,
       game: <GamePage b={b} />,
       touch: <TouchPage b={b} ui={ui} />,
+      find: <FindPage b={b} wide={tablet && !sideways} />,
       app: <AppContent b={b} onTour={startTour} onFirstRun={firstRunAgain} />,
     })[k];
-  const iCur = tabs.findIndex((t) => t[0] === cur);
-  const dirOf = (j: number) => (j === iCur ? Math.sign(j - tabs.findIndex((t) => t[0] === last.prev)) || 1 : Math.sign(j - iCur));
+  const iCur = pages.findIndex((t) => t[0] === cur);
+  const dirOf = (j: number) => (j === iCur ? Math.sign(j - pages.findIndex((t) => t[0] === last.prev)) || 1 : Math.sign(j - iCur));
+  const board = width - 2 * EDGE - insets.left - insets.right; // sideways: the board's width
 
   return (
-    <View style={[s.root, { backgroundColor: c.ground }]}>
-      <StatusBar barStyle={c.dark ? "light-content" : "dark-content"} />
-      {tablet ? (
-        <View style={s.row}>
-          <Rail tabs={tabs} cur={cur} onTab={setTab} navRef={navRef} />
-          {wide && (
-            <ScrollView ref={homeScroll} style={[s.pane, { borderRightColor: c.hair }]} contentContainerStyle={{ padding: 20, paddingTop: insets.top + 18, paddingBottom: insets.bottom + 24 }}>
-              <HomeCards b={b} onEdit={() => setTab("eq")} compact refs={homeRefs} />
-            </ScrollView>
-          )}
+    <View style={[s.root, { backgroundColor: ground }]}>
+      <StatusBar hidden={full} barStyle={c.dark ? "light-content" : "dark-content"} />
+      <NavigationBar hidden={full} />
+      <BlurTargetView ref={glassTarget} style={[StyleSheet.absoluteFill, { backgroundColor: ground }]}>
+        <Backdrop shift={sideways ? 0 : iCur} />
+        {sideways ? (
           <View style={s.grow}>
-            {!wide && (
-              <View style={[s.strip, { paddingTop: insets.top + 16, borderBottomColor: c.hair }]}>
-                <View style={s.grow} ref={stripDevice} collapsable={false}>
-                  <DeviceCard b={b} />
-                </View>
-                {b.status === "connected" && b.state && (
-                  <View style={s.grow} ref={stripNoise} collapsable={false}>
-                    <NoiseCard b={b} compact />
-                  </View>
-                )}
-              </View>
-            )}
-            <View style={s.grow}>
-              {tabs.map(([k], j) => (
-                <Page key={k} active={k === cur} dir={dirOf(j)} title={TITLES[k]} lede={LEDES[k]} top={wide ? insets.top + 28 : 24} bottom={insets.bottom + 32}>
-                  {content(k)}
-                </Page>
-              ))}
-            </View>
+            <TabletBar b={b} onGear={() => setPanel(true)} gearRef={navRef} />
+            <ScrollView
+              ref={homeScroll}
+              contentContainerStyle={{ paddingLeft: EDGE + insets.left, paddingRight: EDGE + insets.right, paddingTop: 4, paddingBottom: insets.bottom + 24 }}
+            >
+              <DashboardBoard b={b} sideways width={board} refs={homeRefs} tablet />
+            </ScrollView>
           </View>
-        </View>
-      ) : (
-        <>
-          {tabs.map(([k], j) => (
+        ) : (
+          pages.map(([k], j) => (
             <Page
               key={k}
               active={k === cur}
@@ -417,34 +528,54 @@ export function MobileApp() {
               scrollRef={k === "home" ? homeScroll : undefined}
               title={k === "home" ? undefined : TITLES[k]}
               lede={LEDES[k]}
-              top={insets.top + 60}
+              top={k === "find" ? insets.top + BAR + 4 : topPad /* Find's title sits under its Back row */}
               bottom={insets.bottom + 96}
-              bar={
-                k === "home" ? (
-                  <View style={s.homeBar}>
-                    <Mark />
-                    <Text style={[s.brand, { color: c.ink }]}>Shono</Text>
-                    <View style={s.grow} />
-                    <Pressable accessibilityRole="button" accessibilityLabel="App settings" hitSlop={6} onPress={() => setAppOpen(true)} style={s.gear}>
-                      <GearIcon color={c.ink} size={22} />
-                    </Pressable>
-                  </View>
-                ) : null
-              }
+              barY={barY}
+              titleInBar={k !== "find"}
+              edge={edge}
             >
               {content(k)}
             </Page>
-          ))}
-          <TabBar tabs={tabs} cur={cur} onTab={setTab} navRef={navRef} />
-          <Sheet open={appOpen} tablet={false} title="App" sub="Look and feel, and the earbuds Shono talks to." onClose={() => setAppOpen(false)}>
-            <ScrollView style={{ maxHeight: height * 0.68 }} contentContainerStyle={{ paddingBottom: 8 }}>
+          ))
+        )}
+      </BlurTargetView>
+      {sideways ? (
+        <SidePanel open={panel} title={TITLES.app} lede={LEDES.app} onClose={() => setPanel(false)} target={glassTarget}>
+          <AppContent b={b} onTour={startTour} onFirstRun={firstRunAgain} />
+        </SidePanel>
+      ) : (
+        <>
+          <TopBar title={TITLES[cur]} home={cur === "home"} back={cur === "find" ? () => setTab("home") : undefined} y={barY} target={glassTarget} onGear={() => setAppOpen(true)} edge={edge} />
+          <TabBar tabs={tabs} cur={cur} lit={cur === "find" ? "home" : cur} onTab={setTab} navRef={navRef} target={glassTarget} />
+          <Sheet open={appOpen} tablet={tablet} title="App" sub="Look and feel, and the earbuds Shono talks to." onClose={() => setAppOpen(false)}>
+            <ScrollView style={{ maxHeight: height * (tablet ? 0.56 : 0.68) }} contentContainerStyle={{ paddingBottom: 8 }}>
               <AppContent b={b} onTour={startTour} onFirstRun={firstRunAgain} />
             </ScrollView>
           </Sheet>
         </>
       )}
+      <Sheet
+        open={limitsAsk}
+        tablet={tablet}
+        title="Let Shono run without limits?"
+        sub="So your phone doesn't pause Shono in the background, where it keeps your noise setting and notes Last seen. Android asks next. You can change it any time in App settings."
+        onClose={() => setLimitsAsk(false)}
+      >
+        <View style={s.sheetBtns}>
+          <Button
+            label="Continue"
+            kind="pri"
+            onPress={() => {
+              setLimitsAsk(false);
+              askBackgroundUnrestricted();
+            }}
+          />
+          <Button label="Not now" kind="out" onPress={() => setLimitsAsk(false)} />
+        </View>
+      </Sheet>
       {tour && <Tour stops={tour} tablet={tablet} onEnd={endTour} />}
       {!onboarded && <Onboarding b={b} onDone={firstRunDone} />}
+      <BluetoothGate onBack={() => !onboarded && b.status === "idle" && void b.connect()} />
       <Toast note={note} />
     </View>
   );
@@ -452,25 +583,22 @@ export function MobileApp() {
 
 const s = StyleSheet.create({
   root: { flex: 1, overflow: "hidden" }, // pages waiting to slide in sit just off-screen
-  row: { flex: 1, flexDirection: "row" },
   grow: { flex: 1, minWidth: 0 },
   titles: { paddingHorizontal: 4, marginBottom: 14 },
   lede: { marginTop: 4, fontSize: 14 },
-  bar: { position: "absolute", top: 0, left: 0, right: 0, flexDirection: "row", alignItems: "center", paddingHorizontal: 20 },
-  barTitle: { fontFamily: F.display, fontSize: 17 },
-  homeBar: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10, marginLeft: -4 },
-  brand: { fontFamily: F.display, fontSize: 21, letterSpacing: -0.3 },
-  gear: { width: 44, height: 44, alignItems: "center", justifyContent: "center", marginRight: -8 },
-  tabbar: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", paddingTop: 6, paddingHorizontal: 10, borderTopWidth: StyleSheet.hairlineWidth },
-  glide: { position: "absolute", top: 10, left: 10, height: 32, alignItems: "center" },
-  glidePill: { width: 58, height: 32, borderRadius: 16 },
+  bar: { position: "absolute", top: 0, left: 0, right: 0, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", paddingHorizontal: 10 },
+  bigTitle: { position: "absolute", height: TITLE_H, lineHeight: TITLE_H, fontFamily: F.display, transformOrigin: "left center" },
+  barMark: { position: "absolute", left: 18 },
+  sheetBtns: { gap: 10, paddingTop: 4 },
+  back: { position: "absolute", left: 6, height: BAR, flexDirection: "row", alignItems: "center", paddingRight: 8 },
+  backLabel: { fontFamily: F.medium, fontSize: 16, marginLeft: -2 },
+  smallTitle: { position: "absolute", left: 96, right: 96, height: BAR, lineHeight: BAR, textAlign: "center", fontFamily: F.display, fontSize: 17 },
+  gear: { width: 44, height: 44, alignItems: "center", justifyContent: "center", marginRight: -6 },
+  tabbar: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", justifyContent: "center", paddingTop: 8, paddingHorizontal: 6 },
+  tabs: { flex: 1, flexDirection: "row", maxWidth: 560 },
+  rim: { position: "absolute", top: 0, left: 0, right: 0, height: StyleSheet.hairlineWidth }, // a crisp top edge
   tab: { flex: 1, alignItems: "center", gap: 3, paddingTop: 4, minHeight: 56 },
   tabIcon: { height: 32, width: 58, alignItems: "center", justifyContent: "center" },
-  tabLabel: { fontFamily: F.medium, fontSize: 11.5 },
-  rail: { width: 92, alignItems: "center", borderRightWidth: StyleSheet.hairlineWidth },
-  railTabs: { marginTop: 22, width: "100%", alignItems: "center", gap: 6 },
-  railGlide: { position: "absolute", top: 0, width: 60, height: 32, borderRadius: 16 },
-  railTab: { height: 64, width: "100%", alignItems: "center", gap: 3 },
-  pane: { width: 392, flexGrow: 0, borderRightWidth: StyleSheet.hairlineWidth },
-  strip: { flexDirection: "row", gap: 12, paddingHorizontal: 24, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth },
+  tabLabel: { fontFamily: F.medium, fontSize: 11.5, letterSpacing: 0.1 },
+  tabLabelOn: { fontFamily: F.semibold },
 });

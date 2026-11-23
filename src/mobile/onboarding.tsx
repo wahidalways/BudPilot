@@ -1,7 +1,7 @@
 // The first run (artifacts/shono-guidance.html): Welcome → Bluetooth access (location on Android 11 and older) →
 // Connect, which connects by itself and offers a short tour of Home. Shown once; the tour can be replayed from App.
-import { type ReactNode, useEffect, useState } from "react";
-import { Image, Linking, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { type ComponentRef, type ReactNode, useEffect, useRef, useState } from "react";
+import { Image, Linking, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import Animated, {
   Easing,
   FadeIn,
@@ -18,10 +18,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { needsLocation, requestBluetoothAccess } from "@/ble/connect";
 import type { BudPilot } from "@/screens/home/use-bud-pilot";
 import { F, useColors, useTheme } from "@/theme";
+import { later } from "@/utils/later";
 import { BudsIcon } from "@/ui/icons";
 
-import { BackIcon, BluetoothIcon, brandOf, CheckIcon, InfoIcon, MoonIcon, PHOTOS, PinIcon, SunIcon } from "./art";
+import Ionicons from "@expo/vector-icons/Ionicons";
+
+import { brandOf, PHOTOS } from "./art";
 import { Button, Press, Rise, SPRING, T, tick, Txt } from "./kit";
+import { AccentPicker } from "./pages";
+import { type Anchor, measureAnchor, Popover } from "./sheet";
 
 type Step = "welcome" | "access" | "connect";
 const STEPS: Step[] = ["welcome", "access", "connect"];
@@ -41,7 +46,7 @@ function StepView({ active, dir, children }: { active: boolean; dir: number; chi
   const reduce = useReducedMotion();
   const p = useSharedValue(active ? 1 : 0);
   useEffect(() => {
-    p.set(reduce ? (active ? 1 : 0) : active ? withTiming(1, { duration: 360, easing: Easing.out(Easing.cubic) }) : withTiming(0, { duration: 160 }));
+    p.set(reduce ? (active ? 1 : 0) : active ? withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) }) : withTiming(0, { duration: 120 }));
   }, [active, reduce, p]);
   const a = useAnimatedStyle(() => ({ opacity: p.get(), transform: [{ translateX: (1 - p.get()) * dir * 28 }] }));
   return (
@@ -109,6 +114,7 @@ const shake = (v: { set: (x: number) => void }) =>
 export function Onboarding({ b, onDone }: { b: BudPilot; onDone: (tour: boolean) => void }) {
   const c = useColors();
   const { setLook } = useTheme();
+  const [palette, setPalette] = useState<Anchor>(); // the colours, beside their button at the top
   const insets = useSafeAreaInsets();
   const [step, setStep] = useState<Step>("welcome");
   const [from, setFrom] = useState<Step>("welcome");
@@ -120,6 +126,8 @@ export function Onboarding({ b, onDone }: { b: BudPilot; onDone: (tour: boolean)
   const i = STEPS.indexOf(step);
   const dirOf = (k: Step) => (k === step ? Math.sign(i - STEPS.indexOf(from)) || 1 : Math.sign(STEPS.indexOf(k) - i));
   const location = needsLocation();
+  const { width, height } = useWindowDimensions();
+  const form = Math.min(width, height) < 600 ? "phone" : width > height ? "sideways" : "upright";
   const live = b.status === "connected" && !!b.state;
   const { logo, model } = brandOf(b.state?.name ?? "");
   const shaken = useSharedValue(0);
@@ -128,7 +136,10 @@ export function Onboarding({ b, onDone }: { b: BudPilot; onDone: (tour: boolean)
   // the Connect step connects by itself; if that fails, it says why and offers to try again
   const { status, error, connect } = b;
   useEffect(() => {
-    if (step === "connect" && status === "idle" && !error) void connect();
+    if (step !== "connect") return;
+    if (status === "idle" && !error) return void connect();
+    // the earbuds dropped here and the quick retries gave up (Shono's own auto-connect waits for the first run)
+    if (status === "reconnecting") return later(() => void connect({ auto: true }), 20_000);
   }, [step, status, error, connect]);
 
   const askAccess = async () => {
@@ -151,7 +162,7 @@ export function Onboarding({ b, onDone }: { b: BudPilot; onDone: (tour: boolean)
         ) : (
           <>
             <Pressable accessibilityRole="button" accessibilityLabel="Back" hitSlop={8} onPress={() => go(STEPS[i - 1])} style={s.iconBtn}>
-              <BackIcon color={c.ink} />
+              <Ionicons name="chevron-back" size={24} color={c.ink} />
             </Pressable>
             <View style={s.progress} accessibilityLabel={`Step ${i} of 2`}>
               <Segment on={i >= 1} />
@@ -161,23 +172,46 @@ export function Onboarding({ b, onDone }: { b: BudPilot; onDone: (tour: boolean)
         )}
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel="Colour"
+          hitSlop={8}
+          onPress={(ev) => {
+            tick();
+            void measureAnchor(ev.currentTarget, setPalette);
+          }}
+          style={[s.iconBtn, s.right]}
+        >
+          <View style={[s.swatch, { backgroundColor: c.signalFill, borderColor: c.hair }]} />
+        </Pressable>
+        <Popover anchor={palette} label="Colour" width={300} onClose={() => setPalette(undefined)}>
+          <View style={s.palette}>
+            <Txt v="small" muted>
+              Colour
+            </Txt>
+            <AccentPicker />
+          </View>
+        </Popover>
+        <Pressable
+          accessibilityRole="button"
           accessibilityLabel={c.dark ? "Switch to light mode" : "Switch to dark mode"}
           hitSlop={8}
           onPress={() => {
             tick();
             setLook({ theme: c.dark ? "light" : "dark" });
           }}
-          style={[s.iconBtn, s.right]}
+          style={s.iconBtn}
         >
-          {c.dark ? <SunIcon color={c.ink} /> : <MoonIcon color={c.ink} />}
+          <Ionicons name={c.dark ? "sunny-outline" : "moon-outline"} size={22} color={c.ink} />
         </Pressable>
       </View>
 
       <View style={s.steps}>
         <StepView active={step === "welcome"} dir={dirOf("welcome")}>
-          <View style={[s.step, { paddingBottom: insets.bottom + 24 }]}>
-            <View style={s.body}>
-              <View style={s.hero}>
+          <StepLayout
+            form={form}
+            align="end"
+            bottom={insets.bottom}
+            art={
+              <View style={[s.hero, form !== "phone" && s.heroTablet]}>
                 <Rise k={0} style={s.heroBud}>
                   <Image source={PHOTOS.left} resizeMode="contain" style={s.heroImg} />
                 </Rise>
@@ -188,149 +222,225 @@ export function Onboarding({ b, onDone }: { b: BudPilot; onDone: (tour: boolean)
                   <Image source={PHOTOS.right} resizeMode="contain" style={s.heroImg} />
                 </Rise>
               </View>
-              <Rise k={3}>
-                <Txt v="big" accessibilityRole="header">
-                  Welcome to Shono
+            }
+            body={
+              <>
+                <Rise k={3}>
+                  <Txt v="big" accessibilityRole="header">
+                    Welcome to Shono
+                  </Txt>
+                </Rise>
+                <Rise k={4}>
+                  <Txt v="sub" style={s.p}>
+                    Control your earbuds from one place: noise control, sound, game mode and touch.
+                  </Txt>
+                </Rise>
+                <Rise k={5}>
+                  <Txt v="sub" style={s.note}>
+                    Shono means <Text style={{ color: c.ink, fontFamily: F.semibold }}>“listen”</Text> in Bangla.
+                  </Txt>
+                </Rise>
+              </>
+            }
+            foot={
+              <Rise k={6} style={s.foot}>
+                <Button label="Get started" kind="pri" style={s.cta} onPress={() => go("access")} />
+                <Txt v="sub" style={s.center}>
+                  Works with a growing list of earbuds
                 </Txt>
               </Rise>
-              <Rise k={4}>
-                <Txt v="sub" style={s.p}>
-                  Control your earbuds from one place: noise control, sound, game mode and touch.
-                </Txt>
-              </Rise>
-              <Rise k={5}>
-                <Txt v="sub" style={s.note}>
-                  Shono means <Text style={{ color: c.ink, fontFamily: F.semibold }}>“listen”</Text> in Bangla.
-                </Txt>
-              </Rise>
-            </View>
-            <Rise k={6} style={s.foot}>
-              <Button label="Get started" kind="pri" style={s.cta} onPress={() => go("access")} />
-              <Txt v="sub" style={s.center}>
-                Works with a growing list of earbuds
-              </Txt>
-            </Rise>
-          </View>
+            }
+          />
         </StepView>
 
         <StepView active={step === "access"} dir={dirOf("access")}>
-          <View style={[s.step, { paddingBottom: insets.bottom + 24 }]}>
-            <View style={[s.body, s.centered]}>
+          <StepLayout
+            form={form}
+            align="center"
+            bottom={insets.bottom}
+            art={
               <Rise k={0}>
-                <View style={[s.icon, { backgroundColor: c.tint }]}>{location ? <PinIcon color={c.signalInk} /> : <BluetoothIcon color={c.signalInk} />}</View>
+                <View style={[s.icon, form === "sideways" && s.iconBig, { backgroundColor: c.tint }]}>
+                  <Ionicons name={location ? "location-outline" : "bluetooth"} size={form === "sideways" ? 52 : 30} color={c.signalInk} />
+                </View>
               </Rise>
-              <Rise k={1}>
-                <Txt v="big" accessibilityRole="header">
-                  {location ? "Allow location access" : "Allow Bluetooth access"}
-                </Txt>
-              </Rise>
-              <Rise k={2}>
-                <Txt v="sub" style={s.p}>
-                  {location
-                    ? "On Android 11 and older, Android only lets apps look for Bluetooth devices when they have location access and Location is on."
-                    : "Shono uses Bluetooth to find your earbuds and change their settings. Android will ask you for Nearby devices access."}
-                </Txt>
-              </Rise>
-              <Rise k={3} style={s.facts}>
-                {(location ? ["Used only to find your earbuds", "Shono doesn't save or share where you are"] : ["Used only to talk to your earbuds", "No location access needed"]).map((f) => (
-                  <View key={f} style={s.fact}>
-                    <CheckIcon color={c.ok} size={18} />
-                    <Txt>{f}</Txt>
-                  </View>
-                ))}
-              </Rise>
-              {access === "denied" || access === "blocked" ? (
-                <Animated.View style={[s.alert, { backgroundColor: c.well }]}>
-                  <Txt v="sub" style={{ color: c.ink }}>
-                    {access === "blocked"
-                      ? "Android won't ask again. Allow it in Settings › Apps › Shono › Permissions, then come back."
-                      : "Shono can't reach your earbuds without it. Tap Continue to try again."}
+            }
+            body={
+              <>
+                <Rise k={1}>
+                  <Txt v="big" accessibilityRole="header">
+                    {location ? "Allow location access" : "Allow Bluetooth access"}
                   </Txt>
-                </Animated.View>
-              ) : null}
-            </View>
-            <View style={s.foot}>
-              {access === "blocked" && <Button label="Open settings" kind="out" style={s.cta} onPress={() => void Linking.openSettings()} />}
-              <Button label={access === "asking" ? "Waiting for Android…" : "Continue"} kind="pri" style={s.cta} onPress={() => void askAccess()} />
-            </View>
-          </View>
+                </Rise>
+                <Rise k={2}>
+                  <Txt v="sub" style={s.p}>
+                    {location
+                      ? "On Android 11 and older, Android only lets apps look for Bluetooth devices when they have location access and Location is on."
+                      : "Shono uses Bluetooth to find your earbuds and change their settings. Android will ask you for Nearby devices access."}
+                  </Txt>
+                </Rise>
+                <Rise k={3} style={s.facts}>
+                  {(location ? ["Used only to find your earbuds", "Shono doesn't save or share where you are"] : ["Used only to talk to your earbuds", "No location access needed"]).map((f) => (
+                    <View key={f} style={s.fact}>
+                      <Ionicons name="checkmark-circle" size={20} color={c.ok} />
+                      <Txt>{f}</Txt>
+                    </View>
+                  ))}
+                </Rise>
+                {access === "denied" || access === "blocked" ? (
+                  <Animated.View style={[s.alert, { backgroundColor: c.well }]}>
+                    <Txt v="sub" style={{ color: c.ink }}>
+                      {access === "blocked"
+                        ? "Android won't ask again. Allow it in Settings › Apps › Shono › Permissions, then come back."
+                        : "Shono can't reach your earbuds without it. Tap Continue to try again."}
+                    </Txt>
+                  </Animated.View>
+                ) : null}
+              </>
+            }
+            foot={
+              <View style={s.foot}>
+                {access === "blocked" && <Button label="Open settings" kind="out" style={s.cta} onPress={() => void Linking.openSettings()} />}
+                <Button label={access === "asking" ? "Waiting for Android…" : "Continue"} kind="pri" style={s.cta} onPress={() => void askAccess()} />
+              </View>
+            }
+          />
         </StepView>
 
         <StepView active={step === "connect"} dir={dirOf("connect")}>
-          <View style={[s.step, { paddingBottom: insets.bottom + 24 }]}>
-            <View style={[s.body, s.centered]}>
+          <StepLayout
+            form={form}
+            align="center"
+            bottom={insets.bottom}
+            art={
               <Rise k={0} style={s.findWrap}>
                 <CasePhoto found={live} />
                 {!live && !b.error ? <Looking /> : <View style={s.lookingSpace} />}
               </Rise>
-              <Txt v="big" accessibilityRole="header">
-                {live ? "You're connected" : "Open the case"}
-              </Txt>
-              <Txt v="sub" style={s.p}>
-                {live ? "Your earbuds are ready. Take a quick look at the main controls?" : "Keep your earbuds close to your phone. Shono finds and connects to them by itself."}
-              </Txt>
-              {live && (
-                <Rise k={0}>
-                  <View style={[s.devRow, { backgroundColor: c.raised, borderColor: c.hair }]}>
-                    <View style={s.grow}>
-                      <View style={s.inline}>
-                        {logo && <Image source={logo.src} accessibilityLabel="hoco" resizeMode="contain" style={{ height: 12, width: 12 * logo.aspect, tintColor: c.ink }} />}
-                        <Txt v="strong" style={{ fontFamily: F.semibold }}>
-                          {model || b.state!.name}
+            }
+            body={
+              <>
+                <Txt v="big" accessibilityRole="header">
+                  {live ? "You're connected" : "Open the case"}
+                </Txt>
+                <Txt v="sub" style={s.p}>
+                  {live ? "Your earbuds are ready. Take a quick look at the main controls?" : "Keep your earbuds close to your phone. Shono finds and connects to them by itself."}
+                </Txt>
+                {live && (
+                  <Rise k={0}>
+                    <View style={[s.devRow, { backgroundColor: c.raised, borderColor: c.hair }]}>
+                      <View style={s.grow}>
+                        <View style={s.inline}>
+                          {logo && <Image source={logo.src} accessibilityLabel="hoco" resizeMode="contain" style={{ height: 12, width: 12 * logo.aspect, tintColor: c.ink }} />}
+                          <Txt v="strong" style={{ fontFamily: F.semibold }}>
+                            {model || b.state!.name}
+                          </Txt>
+                        </View>
+                        <Txt v="sub">
+                          {(["left", "right", "case"] as const)
+                            .map((k) => `${k[0].toUpperCase()}${k.slice(1)} ${b.state!.battery[k]?.percent ?? "—"}%`)
+                            .join(" · ")}
                         </Txt>
                       </View>
-                      <Txt v="sub">
-                        {(["left", "right", "case"] as const)
-                          .map((k) => `${k[0].toUpperCase()}${k.slice(1)} ${b.state!.battery[k]?.percent ?? "—"}%`)
-                          .join(" · ")}
-                      </Txt>
+                      <View style={s.inline}>
+                        <Ionicons name="checkmark-circle" size={18} color={c.ok} />
+                        <Txt v="small" style={{ color: c.ok }}>
+                          Connected
+                        </Txt>
+                      </View>
                     </View>
-                    <View style={s.inline}>
-                      <CheckIcon color={c.ok} size={16} />
-                      <Txt v="small" style={{ color: c.ok }}>
-                        Connected
-                      </Txt>
-                    </View>
+                  </Rise>
+                )}
+                {!live && b.error ? (
+                  <View style={[s.alert, { backgroundColor: c.well }]}>
+                    <Txt v="sub" style={{ color: c.ink }}>
+                      {b.error}
+                      {location ? " On Android 11 and older, Location must be on to find Bluetooth devices." : ""}
+                    </Txt>
                   </View>
-                </Rise>
-              )}
-              {!live && b.error ? (
-                <View style={[s.alert, { backgroundColor: c.well }]}>
-                  <Txt v="sub" style={{ color: c.ink }}>
-                    {b.error}
-                    {location ? " On Android 11 and older, Location must be on to find Bluetooth devices." : ""}
-                  </Txt>
-                </View>
-              ) : null}
-              {!live && (
-                <View style={s.tip}>
-                  <InfoIcon color={c.ink2} size={16} />
-                  <Txt v="sub" style={s.grow}>
-                    Close other apps that control your earbuds first. They allow one app at a time.
-                  </Txt>
-                </View>
-              )}
-            </View>
-            <View style={s.foot}>
-              <Animated.View style={[s.cta, shakeStyle]}>
-                <Button
-                  kind="pri"
-                  label={live ? "Show me around" : b.error ? "Try again" : "Searching…"}
-                  style={s.cta}
-                  onPress={() => {
-                    if (live) return onDone(true);
-                    if (b.error && b.status === "idle") return void b.connect();
-                    shake(shaken); // still looking: the button says so instead of doing nothing
-                  }}
-                />
-              </Animated.View>
-              <Press accessibilityRole="button" onPress={() => onDone(false)} style={[s.skip, !live && s.hidden]} disabled={!live}>
-                <Text style={[T.strong, { color: c.signalInk, fontFamily: F.semibold }]}>Skip the tour</Text>
-              </Press>
-            </View>
-          </View>
+                ) : null}
+                {!live && (
+                  <View style={s.tip}>
+                    <Ionicons name="information-circle-outline" size={17} color={c.ink2} />
+                    <Txt v="sub" style={s.grow}>
+                      Close other apps that control your earbuds first. They allow one app at a time.
+                    </Txt>
+                  </View>
+                )}
+              </>
+            }
+            foot={
+              <View style={s.foot}>
+                <Animated.View style={[s.cta, shakeStyle]}>
+                  <Button
+                    kind="pri"
+                    label={live ? "Show me around" : b.error ? "Try again" : "Searching…"}
+                    style={s.cta}
+                    onPress={() => {
+                      if (live) return onDone(true);
+                      if (b.error && b.status === "idle") return void b.connect();
+                      shake(shaken); // still looking: the button says so instead of doing nothing
+                    }}
+                  />
+                </Animated.View>
+                <Press accessibilityRole="button" onPress={() => onDone(false)} style={[s.skip, !live && s.hidden]} disabled={!live}>
+                  <Text style={[T.strong, { color: c.signalInk, fontFamily: F.semibold }]}>Skip the tour</Text>
+                </Press>
+              </View>
+            }
+          />
         </StepView>
       </View>
+    </View>
+  );
+}
+
+/** How a first-run step sits on the screen. Phone: the picture, the words, and the buttons low for the thumb
+ * (`align`: the words at the bottom, centred, or in a scroll). Tablet upright: all of it one centred block, the buttons
+ * right under the words. Tablet sideways: the picture on the left half, the words and buttons centred on the right
+ * (the user, 2026-11-24: the text sat low with the top empty). */
+function StepLayout({
+  form,
+  align,
+  bottom,
+  art,
+  body,
+  foot,
+}: {
+  form: "phone" | "upright" | "sideways";
+  align: "end" | "center";
+  bottom: number;
+  art: ReactNode;
+  body: ReactNode;
+  foot: ReactNode;
+}) {
+  if (form === "sideways")
+    return (
+      <View style={[s.side, { paddingBottom: bottom + 24 }]}>
+        <View style={s.sideArt}>
+          <View style={s.sideArtIn}>{art}</View>
+        </View>
+        <ScrollView style={s.sideWords} contentContainerStyle={s.sideWordsIn} showsVerticalScrollIndicator={false}>
+          {body}
+          <View style={s.sideFoot}>{foot}</View>
+        </ScrollView>
+      </View>
+    );
+  if (form === "upright")
+    return (
+      <ScrollView style={s.grow} contentContainerStyle={[s.upright, { paddingBottom: bottom + 24 }]} showsVerticalScrollIndicator={false}>
+        {art}
+        {body}
+        <View style={s.sideFoot}>{foot}</View>
+      </ScrollView>
+    );
+  return (
+    <View style={[s.step, { paddingBottom: bottom + 24 }]}>
+      <View style={[s.body, align === "center" && s.centered]}>
+        {art}
+        {body}
+      </View>
+      {foot}
     </View>
   );
 }
@@ -341,12 +451,17 @@ export type Rect = { x: number; y: number; w: number; h: number };
 export type TourStop = { title: string; body: string; locate: () => Promise<Rect | undefined>; radius?: number };
 
 /** A spotlight that springs from card to card, with a tip card under it (beside it on tablets) and Skip on every stop. */
+const TIP_W = 340; // the tour card's width on a tablet
+
 export function Tour({ stops, onEnd, tablet }: { stops: TourStop[]; onEnd: (finished: boolean) => void; tablet: boolean }) {
   const c = useColors();
   const reduce = useReducedMotion();
   const [i, setI] = useState(0);
-  const [tipH, setTipH] = useState(150);
+  const tipH = useRef(190); // the card's real height once it has laid out (text size and the stop change it)
+  const spotRect = useRef<Rect>(undefined);
+  const root = useRef<ComponentRef<typeof View>>(null);
   const { width: screenW, height: screenH } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const x = useSharedValue(0);
   const y = useSharedValue(0);
   const w = useSharedValue(0);
@@ -357,11 +472,38 @@ export function Tour({ stops, onEnd, tablet }: { stops: TourStop[]; onEnd: (fini
   const shown = useSharedValue(0);
   const stop = stops[i];
 
+  // the tip card: beside the spotlight on a tablet when there's room on its right, else below it (or above, whichever
+  // fits; the roomier side when neither does), always inside the status and navigation bars
+  const placeTip = (animate: boolean) => {
+    const rect = spotRect.current;
+    if (!rect) return;
+    const th = tipH.current;
+    const to = (v: typeof tipX, n: number) => v.set(animate && !reduce ? withSpring(n, SPRING) : n);
+    const top = insets.top + 12;
+    const bottom = screenH - insets.bottom - 12;
+    const inside = (n: number) => Math.max(top, Math.min(n, bottom - th));
+    const tipW = tablet ? TIP_W : screenW - 32;
+    if (tablet && rect.x + rect.w + 18 + tipW + 16 <= screenW) {
+      to(tipX, rect.x + rect.w + 18);
+      return to(tipY, inside(rect.y));
+    }
+    to(tipX, tablet ? Math.min(Math.max(rect.x, 16), screenW - tipW - 16) : 16);
+    const below = rect.y + rect.h + 16;
+    const above = rect.y - 16 - th;
+    const roomBelow = bottom - below;
+    const roomAbove = above + th - top;
+    to(tipY, inside(roomBelow >= th || (roomAbove < th && roomBelow >= roomAbove) ? below : above));
+  };
+
   useEffect(() => {
     let gone = false;
-    void stop.locate().then((rect) => {
+    // the card's place relative to this overlay: Android may measure from below the status bar (Expo Go does) while the
+    // overlay starts at the top of the screen, so both are measured the same way and subtracted
+    const origin = new Promise<{ x: number; y: number }>((res) => (root.current ? root.current.measureInWindow((x, y) => res({ x, y })) : res({ x: 0, y: 0 })));
+    void Promise.all([stop.locate(), origin]).then(([found, o]) => {
       if (gone) return;
-      if (!rect) return i + 1 < stops.length ? setI(i + 1) : onEnd(true); // its card isn't there (e.g. disconnected)
+      if (!found) return i + 1 < stops.length ? setI(i + 1) : onEnd(true); // its card isn't there (e.g. disconnected)
+      const rect = { ...found, x: found.x - o.x, y: found.y - o.y };
       const pad = 6;
       const first = shown.get() === 0;
       const to = (v: typeof x, n: number) => v.set(first || reduce ? n : withSpring(n, SPRING));
@@ -370,13 +512,8 @@ export function Tour({ stops, onEnd, tablet }: { stops: TourStop[]; onEnd: (fini
       to(w, rect.w + pad * 2);
       to(h, rect.h + pad * 2);
       r.set(stop.radius ?? 26);
-      if (tablet) {
-        to(tipX, rect.x + rect.w + 18);
-        to(tipY, Math.min(Math.max(rect.y, 48), screenH - tipH - 24));
-      } else {
-        const below = rect.y + rect.h + 16;
-        to(tipY, below + tipH < screenH - 24 ? below : Math.max(48, rect.y - tipH - 16));
-      }
+      spotRect.current = rect;
+      placeTip(!first);
       shown.set(withTiming(1, { duration: 260 }));
     });
     return () => {
@@ -394,7 +531,7 @@ export function Tour({ stops, onEnd, tablet }: { stops: TourStop[]; onEnd: (fini
   const tip = useAnimatedStyle(() => ({ opacity: shown.get(), transform: [{ translateX: tipX.get() }, { translateY: tipY.get() }] }));
   const last = i === stops.length - 1;
   return (
-    <View style={StyleSheet.absoluteFill}>
+    <View ref={root} collapsable={false} style={StyleSheet.absoluteFill}>
       {/* everything outside the spotlight dims: one huge shadow around a clear rounded box */}
       <Animated.View
         pointerEvents="none"
@@ -403,8 +540,13 @@ export function Tour({ stops, onEnd, tablet }: { stops: TourStop[]; onEnd: (fini
       <Pressable style={StyleSheet.absoluteFill} accessible={false} onPress={() => {}} />
       <Animated.View
         accessibilityViewIsModal
-        onLayout={(e) => setTipH(e.nativeEvent.layout.height)}
-        style={[s.tipCard, { width: tablet ? 340 : screenW - 32, backgroundColor: c.dark ? "#22262E" : c.surface }, tip]}
+        onLayout={(e) => {
+          const h = e.nativeEvent.layout.height;
+          if (Math.abs(h - tipH.current) < 1) return;
+          tipH.current = h;
+          placeTip(shown.get() > 0); // a taller card (bigger text, a longer stop) moves to stay on screen
+        }}
+        style={[s.tipCard, { width: tablet ? TIP_W : screenW - 32, backgroundColor: c.dark ? "#22262E" : c.surface }, tip]}
       >
         <Animated.View key={i} entering={reduce ? undefined : FadeIn.duration(260)}>
           <Txt v="small" style={{ color: c.signalInk, fontFamily: F.semibold }}>
@@ -444,6 +586,17 @@ const s = StyleSheet.create({
   steps: { flex: 1 },
   step: { flex: 1, paddingHorizontal: 24, alignSelf: "center", width: "100%", maxWidth: 560 },
   body: { flex: 1, justifyContent: "flex-end", paddingBottom: 28 },
+  side: { flex: 1, flexDirection: "row", alignItems: "center", gap: 56, paddingHorizontal: 56, alignSelf: "center", width: "100%", maxWidth: 1120 },
+  sideArt: { flex: 1, alignItems: "center", justifyContent: "center" },
+  sideArtIn: { width: "100%", maxWidth: 440, alignItems: "center" },
+  sideWords: { flex: 1, maxWidth: 480 },
+  sideWordsIn: { flexGrow: 1, justifyContent: "center", paddingVertical: 24 },
+  sideFoot: { marginTop: 28 },
+  upright: { flexGrow: 1, justifyContent: "center", paddingHorizontal: 24, alignSelf: "center", width: "100%", maxWidth: 560 },
+  heroTablet: { height: 240, marginBottom: 0, alignSelf: "stretch" },
+  iconBig: { width: 112, height: 112, borderRadius: 32 },
+  swatch: { width: 22, height: 22, borderRadius: 11, borderWidth: 2 },
+  palette: { gap: 8, padding: 8 },
   centered: { justifyContent: "center" },
   hero: { flexDirection: "row", alignItems: "flex-end", justifyContent: "center", gap: 6, marginBottom: 34, height: 170 },
   heroBud: { flex: 1, height: 150 },

@@ -29,6 +29,7 @@ export function sampleTransport(): Transport {
   for (let i = 0; i + 1 < settings.length; i += 1 + settings[i]) at[settings[i + 1]] = i + 2;
   settings.set([82, 76, 0x80 | 54], at[SETTING_BATTERY]);
   const sys = parseTlvs(CAPTURED_SYSINFO.subarray(1)); // attribute -> value, updated by what Shono sets
+  sys.get(4)?.set([0], 0); // the EQ (attribute 4) starts on Normal, as new earbuds do (the capture was on a Custom curve)
   let wear = 2; // 2 on, 1 off
 
   let send: (b: Uint8Array) => void = () => {};

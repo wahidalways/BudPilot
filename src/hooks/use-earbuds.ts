@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AppState, Platform } from "react-native";
 
-import { connectEarbuds, hasKnownEarbuds } from "@/ble/connect";
+import { connectEarbuds, hasKnownEarbuds, watchSoundHere } from "@/ble/connect";
 import { HOCO_EQ35 } from "@/devices/hoco-eq35";
 import { desktop } from "@/hooks/use-desktop";
 import type { Transport } from "@/jieli/client";
 import { Earbuds, type EarbudsState, noiseModeMask, storedAncLevel, withEq } from "@/jieli/earbuds";
 import { addCorrection, type Correction } from "@/utils/corrections";
 import { atSwitchOn, byPressAndHold, cameOnAbove, caseChanged } from "@/utils/noise-switch";
+import { later, sleep } from "@/utils/later";
 import { loadPref, savePref } from "@/utils/prefs";
+
+import { logLine } from "../../modules/shono-keeper";
 
 type Status = "idle" | "connecting" | "connected" | "reconnecting";
 
@@ -19,11 +23,15 @@ export type NoisePref = { mode: number; ncLevel: number; adaptive: boolean };
 export const ancOn = (): NoisePref => ({ mode: 1, ncLevel: HOCO_EQ35.ancLevels[0].level, adaptive: false });
 
 const REFRESH_MS = 3000;
+// in the background on Android: the earbuds announce their own changes, so the read is only a safety net, and a slower
+// one saves both batteries
+const BG_REFRESH_MS = 30_000;
 const VOLUME_MS = 500; // the volume alone, more often, while volume taps are on: a tap should show in Windows right away
 const RECONNECT_MS = 1000; // the earbuds switch ANC on ~3 s after power-up, so be connected before that
 const NOISE_KEY = "budpilot.noise";
 const STUCK_MS = 30_000; // an attempt this old has hung (Bluetooth can stall); allow a new one
 const REUSE_MS = 20_000; // after a drop, reconnect straight to the same earbuds this long; then scan for them afresh
+const RELEASE_MS = 4000; // the earbuds' sound has been elsewhere this long: let the other device have them
 const DEAD_AFTER = 4; // reads in a row without an answer: the link is dead even if Bluetooth still calls it up
 const UNDONE_MS = 5000; // the earbuds undoing a restore this fast means they won't allow it right now
 const BACKOFF_MS = 4000; // then wait this long before trying again; their resets come in short bursts
@@ -36,11 +44,14 @@ const CORRECTIONS_KEY = "budpilot.corrections";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** A line in the Windows app's connection log (%APPDATA%\BudPilot\connection.log), to find out why links drop. */
-const log = (line: string) => desktop()?.log?.(line);
+// Windows: connection.log through the shell; Android: Shono's log on the phone (App settings › Troubleshooting)
+const log = (line: string) => {
+  desktop()?.log?.(line);
+  logLine(line);
+};
 const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
 const batteryText = (b: EarbudsState["battery"]) =>
   (["left", "right", "case"] as const).map((k) => `${k} ${b[k] ? `${b[k].percent}%${b[k].charging ? " charging" : ""}` : "gone"}`).join(", ");
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const drifted = (s: EarbudsState, p?: NoisePref) =>
   !!p &&
@@ -57,6 +68,10 @@ export function useEarbuds() {
   // the Windows app connects by itself from the start (its shell calls __budpilotAutoConnect), so it starts out waiting
   const [status, setStatus] = useState<Status>(() => (desktop() ? "reconnecting" : "idle"));
   const [state, setState] = useState<EarbudsState>();
+  // read every 3 s while connected: shows in the log whether volume taps reached the earbuds
+  useEffect(() => {
+    if (state?.volume !== undefined) log(`earbuds' volume ${state.volume}`);
+  }, [state?.volume]);
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(0);
   const [noisePref, setNoisePref] = useState<NoisePref | undefined>(() => loadPref<NoisePref>(NOISE_KEY));
@@ -75,15 +90,20 @@ export function useEarbuds() {
   const droppedAt = useRef(0); // when the last link dropped
   const connectedAt = useRef(0);
   const lastFail = useRef(""); // the last failure logged, so a long wait logs it once
-  const [pcLinked, setPcLinked] = useState<boolean>(); // Windows has the earbuds connected (for sound)
+  // the earbuds' sound is on this device (Windows: its shell watches the classic link; a phone: Android's audio
+  // connections); undefined until that's known
+  const [pcLinked, setPcLinked] = useState<boolean>();
   useEffect(() => desktop()?.onPcLink?.(setPcLinked), []);
+  useEffect(() => watchSoundHere(setPcLinked), []);
+  const soundHere = useRef(pcLinked);
   const noteFail = useCallback((err: unknown) => {
     const m = message(err);
     if (m !== lastFail.current) log(`connect failed: ${(lastFail.current = m)}`);
   }, []);
   const connectingSince = useRef(0);
   const queue = useRef<Promise<void>>(Promise.resolve());
-  const poll = useRef<ReturnType<typeof setInterval>>(undefined);
+  const poll = useRef<() => void>(undefined); // cancels the next read
+  const manual = useRef(false); // the link came from the user's own Connect: following the sound doesn't take it away
   // only volume taps need the volume between full refreshes; a read costs a Bluetooth round trip (~1% of a core)
   const volumeWatch = useRef(true);
   const watchVolume = useCallback((on: boolean) => void (volumeWatch.current = on), []);
@@ -135,7 +155,7 @@ export function useEarbuds() {
         record(from, p.mode, tookMs);
         setError(undefined);
         // the firmware may still be finishing its own switch (and syncing the other earbud): say it once more
-        setTimeout(() => {
+        later(() => {
           if (buds.current === e && pref.current === p && keepRef.current) void enqueue(() => applyNoise(e, p)).catch(() => {});
         }, SETTLE_MS);
       } finally {
@@ -195,7 +215,7 @@ export function useEarbuds() {
         if (link.current !== t) return; // our own disconnect, or a link that already failed
         const recent = buds.current?.recentPushes.slice(-4).map((p) => `${p.at} ${p.op.toString(16)}: ${p.data}`);
         link.current = undefined;
-        clearInterval(poll.current);
+        poll.current?.();
         buds.current = undefined;
         droppedAt.current = Date.now();
         log(`link lost after ${secs(droppedAt.current - connectedAt.current)}; last from the earbuds: ${recent?.join(" | ") || "nothing"}`);
@@ -204,10 +224,11 @@ export function useEarbuds() {
         void (async () => {
           // the earbuds went in the case or out of range: straight back to the same ones first (quick after a trip to
           // the case); after REUSE_MS __budpilotAutoConnect scans afresh, in case they're back under another address
-          while (wanted.current && !buds.current && Date.now() - droppedAt.current < REUSE_MS) {
+          while (wanted.current && !buds.current && soundHere.current !== false && Date.now() - droppedAt.current < REUSE_MS) {
             await sleep(RECONNECT_MS);
             if (!wanted.current || buds.current || connecting.current) continue;
             connecting.current = true;
+            connectingSince.current = Date.now(); // or the stuck-attempt check takes it for hung and starts a second
             try {
               await session.current!(await connectEarbuds({ reuse: true }), "the same earbuds");
             } catch (err) {
@@ -222,7 +243,8 @@ export function useEarbuds() {
         await t.close();
         throw err;
       });
-      if (buds.current) return void (await e.close()); // a slower attempt finished after another one won
+      // a slower attempt finished after another one won, or the user disconnected meanwhile
+      if (buds.current || !wanted.current) return void (await e.close());
       buds.current = e;
       link.current = t;
       poweredAt.current = Date.now(); // found freshly on: the firmware may still be about to switch by itself
@@ -248,15 +270,23 @@ export function useEarbuds() {
         void enqueue(() => e.setAnc(1, low.ncLevel)).catch(() => {});
       }
       void enqueue(() => e.setNoiseModes(allModes(e))).catch(() => {}); // press and hold may use every mode
-      // keep up with changes made by the earbud buttons or other apps; skips a beat if one is still running
+      // keep up with changes made by the earbud buttons or other apps; skips a beat if one is still running. A full read
+      // every 3 s on screen (30 s in the background on Android); the volume alone every 0.5 s only while volume taps
+      // need it (Windows); and right after a put-back's back-off ends, so its retry isn't kept waiting
       let refreshing = false;
-      let tick = 0;
+      let lastFull = Date.now();
       let misses = 0;
-      clearInterval(poll.current);
-      poll.current = setInterval(() => {
-        if (refreshing || buds.current !== e) return;
-        const full = ++tick % (REFRESH_MS / VOLUME_MS) === 0;
-        if (!full && !volumeWatch.current) return;
+      poll.current?.();
+      const tick = () => {
+        if (buds.current !== e) return;
+        const background = Platform.OS === "android" && AppState.currentState !== "active";
+        const fullEvery = background ? BG_REFRESH_MS : REFRESH_MS;
+        const step = volumeWatch.current ? VOLUME_MS : fullEvery;
+        const wake = pausedUntil.current - Date.now();
+        poll.current = later(tick, wake > 0 ? Math.min(step, wake + 50) : step);
+        if (refreshing) return;
+        const full = !volumeWatch.current || Date.now() - lastFull >= fullEvery - 50;
+        if (full) lastFull = Date.now();
         refreshing = true;
         void enqueue(() => (full ? e.refresh() : e.refreshVolume()))
           .then(() => {
@@ -272,7 +302,8 @@ export function useEarbuds() {
             void e.close();
           })
           .finally(() => (refreshing = false));
-      }, VOLUME_MS);
+      };
+      poll.current = later(tick, volumeWatch.current ? VOLUME_MS : REFRESH_MS);
     },
     [enqueue, restoreIfDrifted, putBack, noteFail, keepChoice],
   );
@@ -290,12 +321,14 @@ export function useEarbuds() {
       setStatus(auto ? "reconnecting" : "connecting");
       wanted.current = true;
       paused.current = false;
+      manual.current = !auto;
       try {
         await startSession(await connectEarbuds());
       } catch (e) {
         noteFail(e);
-        if (auto) setStatus("reconnecting");
-        else {
+        if (auto) {
+          if (wanted.current) setStatus("reconnecting"); // a Disconnect meanwhile stays a Disconnect
+        } else {
           wanted.current = false;
           setError(message(e));
           setStatus("idle");
@@ -312,10 +345,36 @@ export function useEarbuds() {
   useEffect(() => {
     (globalThis as { __budpilotAutoConnect?: () => void }).__budpilotAutoConnect = () => {
       if (connecting.current && Date.now() - connectingSince.current > STUCK_MS) connecting.current = false; // a hung attempt
-      if (paused.current || buds.current || connecting.current) return;
+      if (paused.current || buds.current || connecting.current || soundHere.current === false) return;
+      // in the background on Android, only when the earbuds play on this phone: no endless scans while that's unknown
+      if (Platform.OS === "android" && AppState.currentState !== "active" && soundHere.current !== true) return;
       if (!wanted.current || !hasKnownEarbuds() || Date.now() - droppedAt.current >= REUSE_MS) void connect({ auto: true });
     };
   }, [connect]);
+
+  // Follow the sound. The earbuds take one control link at a time, so it goes to the device they're playing on: when
+  // their sound moves to another device, let go (after a few seconds, so a blip doesn't); when it comes back, connect
+  // at once instead of waiting for the next try.
+  // (also once a connection finishes after the sound has left; not one the user made with Connect)
+  useEffect(() => {
+    soundHere.current = pcLinked;
+    if (pcLinked === true) {
+      if (wanted.current && !paused.current && !buds.current && !connecting.current) void connect({ auto: true });
+      return;
+    }
+    if (pcLinked !== false || status !== "connected" || manual.current) return;
+    return later(() => {
+      const e = buds.current;
+      if (soundHere.current !== false || !e || manual.current) return;
+      log("the earbuds' sound moved to another device: letting go of them so it can connect");
+      poll.current?.();
+      buds.current = undefined;
+      link.current = undefined; // so the drop isn't taken for the earbuds leaving
+      droppedAt.current = Date.now();
+      setStatus("reconnecting"); // still wanted: connects again when the sound comes back
+      void e.close();
+    }, RELEASE_MS);
+  }, [pcLinked, status, connect]);
 
   // A remount (a live-mode code edit, an error boundary) must not leave this copy's link open: the earbuds take one
   // link at a time, so the new copy could never connect and the screen would say "Not connected" for good.
@@ -323,7 +382,7 @@ export function useEarbuds() {
     () => () => {
       wanted.current = false; // this copy stops reconnecting; the new one connects by itself
       link.current = undefined; // so the drop below isn't taken for the earbuds leaving
-      clearInterval(poll.current);
+      poll.current?.();
       void buds.current?.close();
       buds.current = undefined;
     },
@@ -335,7 +394,7 @@ export function useEarbuds() {
     paused.current = true;
     log("disconnected by the user: no connecting by itself until Connect or a restart");
     const e = buds.current;
-    clearInterval(poll.current);
+    poll.current?.();
     buds.current = undefined;
     link.current = undefined;
     setStatus("idle");

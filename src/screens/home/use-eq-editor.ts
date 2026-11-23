@@ -7,6 +7,8 @@ import { MAX_MY_EQS, nameProblem } from "@/utils/my-eqs";
 import type { BudPilot } from "./use-bud-pilot";
 
 const flat = () => P.eqBands.map(() => 0);
+/** What a preset does, as a curve (the device's `shape`: the earbuds play their own stored curve for presets). */
+const presetShape = (mode: number) => P.eqPresets.find((p) => p.mode === mode)?.shape;
 
 // names a saved EQ can't take: what the pill row already shows
 const TAKEN = [...P.eqPresets.map((p) => p.name), "Custom", GAME_EQ_NAME];
@@ -23,8 +25,9 @@ export function useEqEditor(b: BudPilot) {
   const [naming, setNaming] = useState<Naming>();
   const custom = P.customEqMode;
   const customOn = state.eqMode === custom;
-  const stored = state.eqPresets.find((p) => p.mode === custom)?.gains;
-  const gains = draft ?? (customOn ? state.eqGains : (stored ?? flat()));
+  // a preset shows its own shape (the user: "it should show the preview"); dragging starts your own from it
+  const shown = customOn ? state.eqGains : (presetShape(state.eqMode) ?? flat());
+  const gains = draft ?? shown;
   const playing = my.playing;
 
   // a drag or an arrow key changes the saved EQ playing, if one is. It and the earbuds change in the same moment
@@ -43,7 +46,7 @@ export function useEqEditor(b: BudPilot) {
     const problem = nameProblem(naming.name, my.list, TAKEN, naming.id);
     if (problem) return setNaming({ ...naming, problem });
     if (naming.id) my.rename(naming.id, naming.name);
-    else my.saveAs(naming.name, customOn ? state.eqGains : flat()); // the current sound; a preset's lives in the firmware
+    else my.saveAs(naming.name, shown); // what the curve shows: the current sound, or the preset's shape to start from
     setNaming(undefined);
   };
 
@@ -67,7 +70,7 @@ export function useEqEditor(b: BudPilot) {
     startNew,
     kind,
     playing,
-    faded: !customOn && !draft,
+    faded: false,
     isFlat: gains.every((g) => g === 0),
     resetToFlat: () => commit(flat()),
   };

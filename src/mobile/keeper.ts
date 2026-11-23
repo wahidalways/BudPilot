@@ -8,6 +8,7 @@ import { seconds, today } from "@/utils/corrections";
 import { loadPref, savePref } from "@/utils/prefs";
 
 import { keeperAvailable, onStopPressed, startKeeper, stopKeeper } from "../../modules/shono-keeper";
+import { useLastSeenOn } from "./find";
 
 const ASKED_KEY = "budpilot.askedNotifications";
 
@@ -20,7 +21,7 @@ async function askNotificationsOnce() {
 }
 
 /** What the ongoing notification says: what Shono is keeping, and today's put-backs. */
-export function keeperText(b: BudPilot) {
+export function keeperText(b: BudPilot, lastSeen = false) {
   const live = b.status === "connected" && !!b.state;
   const keeping = keepChipParts(b)?.text.join("");
   const { count, fastestMs } = today(b.corrections);
@@ -28,17 +29,22 @@ export function keeperText(b: BudPilot) {
     title: live ? (keeping ?? "Connected to your earbuds") : "Waiting for your earbuds",
     text: !live
       ? "Shono connects by itself when they're out of the case"
-      : count && fastestMs !== undefined
+      : !b.keep && lastSeen
+        ? "Noting where you last used them (Last seen)"
+        : count && fastestMs !== undefined
         ? `Put back ${count} time${count === 1 ? "" : "s"} today · fastest ${seconds(fastestMs)}`
         : "Shono puts it back if your earbuds switch by themselves",
   };
 }
 
-/** Keeps Shono connected in the background while it's keeping a noise setting: an ongoing notification, started once
- * the earbuds are found, kept while Shono waits for them to come back, and gone after Disconnect or its Stop button. */
+/** Keeps Shono connected in the background while it's keeping a noise setting or Last seen is on: an ongoing
+ * notification, started once the earbuds are found, kept while Shono waits for them to come back, and gone after
+ * Disconnect or its Stop button. */
 export function useKeeper(b: BudPilot, onboarded: boolean) {
-  const on = keeperAvailable() && !usingSample() && onboarded && b.keep && b.status !== "idle";
-  const { title, text } = keeperText(b);
+  const lastSeen = useLastSeenOn();
+  const games = b.game.prefs.auto && b.game.usage; // Turn on with games: acts while the game is in front
+  const on = keeperAvailable() && !usingSample() && onboarded && (b.keep || lastSeen || games) && b.status !== "idle";
+  const { title, text } = keeperText(b, lastSeen);
   const { disconnect } = b;
 
   // started while Shono is in front (connecting after the first run, or opened later); after that only its
@@ -60,4 +66,5 @@ export function useKeeper(b: BudPilot, onboarded: boolean) {
     const sub = onStopPressed(() => void disconnect());
     return () => sub.remove();
   }, [disconnect]);
+  return on;
 }
