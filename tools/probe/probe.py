@@ -130,6 +130,9 @@ async def main(cmds):
                 tl = bytes.fromhex(data)[1 if op == 0x08 else 0 :]
                 i = 0
                 while i < len(tl):
+                    if tl[i] == 0:  # an empty record: a stray byte, not a real setting
+                        i = -1
+                        break
                     i += 1 + tl[i]
                 if i != len(tl):
                     sys.exit(f"refusing {op:02X}:{data}: TLV lengths don't add up")

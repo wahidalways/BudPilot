@@ -20,4 +20,3 @@ export function pickStrength(db: number, current: number): number {
 export const nearestIndex = (level: number, levels: number[]) =>
   levels.reduce((best, l, i) => (Math.abs(l - level) < Math.abs(levels[best] - level) ? i : best), 0);
 
-export const roomWord = (db: number) => (db < ROOM_DB[0] ? "quiet" : db < ROOM_DB[1] ? "some noise" : "loud");

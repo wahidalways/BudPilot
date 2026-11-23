@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import type { Colors } from "@/theme";
+import { F, useColors } from "@/theme";
+import { Txt } from "@/ui/kit";
 import { latencyMs } from "@/utils/game";
-
-import { cardStyles } from "./card";
 
 const BEEPS = 6;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 type Results = { normal?: number | null; game?: number | null }; // null: not enough taps
 
 /** Beeps at random moments; the user taps when they hear each one. Normal vs Game mode shows the difference. */
-export function LatencyCheck({ c, gameOn }: { c: Colors; gameOn: boolean }) {
+export function LatencyCheck({ gameOn }: { gameOn: boolean }) {
+  const c = useColors();
   const [beep, setBeep] = useState(0); // 0 = not running
   const [results, setResults] = useState<Results>({});
   const tap = useRef<() => void>(undefined);
@@ -73,10 +73,7 @@ export function LatencyCheck({ c, gameOn }: { c: Colors; gameOn: boolean }) {
 
   return (
     <View style={s.wrap}>
-      <Text style={[cardStyles.hint, { color: c.muted }]}>
-        Make sure the earbuds are this computer&apos;s sound output. Tap the button, or press Space, as soon as you hear each beep. Run it
-        once with Game mode off and once with it on.
-      </Text>
+      <Txt v="sub">Tap, or press Space, at each beep. Try it with Game mode off and on.</Txt>
       <Pressable
         testID="latency"
         accessibilityRole="button"
@@ -84,23 +81,28 @@ export function LatencyCheck({ c, gameOn }: { c: Colors; gameOn: boolean }) {
         onPress={beep ? () => tap.current?.() : () => void start()}
         style={({ pressed }) => [
           s.button,
-          beep ? { backgroundColor: c.accent } : { borderColor: c.border, borderWidth: 1 },
-          { opacity: pressed ? 0.8 : 1 },
+          beep
+            ? { backgroundColor: c.signalFill, borderColor: "transparent" }
+            : { backgroundColor: c.card, borderColor: c.stroke, boxShadow: `${c.shine}, ${c.drop}` },
+          pressed && s.pressed,
         ]}
       >
-        <Text style={[s.buttonText, { color: beep ? c.onAccent : c.text }]}>
+        <Text style={[s.buttonText, { color: beep ? c.onSignal : c.ink }]}>
           {beep ? `Tap when you hear it (${beep}/${BEEPS})` : `Start check (Game mode ${gameOn ? "on" : "off"})`}
         </Text>
       </Pressable>
       <View style={s.results}>
-        <Text style={{ color: c.text }}>Normal: {show(normal)}</Text>
-        <Text style={{ color: c.text }}>Game mode: {show(game)}</Text>
+        <Txt v="small">
+          Normal <Text style={[s.num, { color: c.ink }]}>{show(normal)}</Text>
+        </Txt>
+        <Txt v="small">
+          Game mode <Text style={[s.num, { color: c.ink }]}>{show(game)}</Text>
+        </Txt>
       </View>
       {diff !== undefined && (
-        <Text style={[cardStyles.hint, { color: c.text }]}>
-          {diff > 0 ? `Game mode is about ${Math.round(diff)} ms quicker.` : "No clear difference this time; try both again."} Your reaction time is in
-          both numbers, so only the difference counts.
-        </Text>
+        <Txt v="sub" muted={false}>
+          {diff > 0 ? `Game mode is about ${Math.round(diff)} ms quicker.` : "No clear difference this time; try both again."}
+        </Txt>
       )}
     </View>
   );
@@ -108,7 +110,9 @@ export function LatencyCheck({ c, gameOn }: { c: Colors; gameOn: boolean }) {
 
 const s = StyleSheet.create({
   wrap: { gap: 10 },
-  button: { borderRadius: 10, paddingVertical: 14, alignItems: "center" },
-  buttonText: { fontSize: 15, fontWeight: "600" },
-  results: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
+  button: { borderRadius: 999, borderWidth: 1, paddingVertical: 12, alignItems: "center" },
+  buttonText: { fontFamily: F.semibold, fontSize: 14 },
+  pressed: { transform: [{ scale: 0.98 }] },
+  results: { flexDirection: "row", gap: 24 },
+  num: { fontFamily: F.semibold, fontVariant: ["tabular-nums"] },
 });

@@ -3,6 +3,7 @@ import type { Transport } from "@/jieli/client";
 const SERVICE = 0xae00;
 const WRITE = 0xae01;
 const NOTIFY = 0xae02;
+const CONNECT_TIMEOUT_MS = 8000;
 
 // Just the slice of Web Bluetooth used here (not in TypeScript's DOM lib).
 type Characteristic = EventTarget & {
@@ -40,7 +41,17 @@ export async function connectEarbuds({ reuse = false } = {}): Promise<Transport>
     }
     known = device;
   }
-  const server = await device.gatt!.connect();
+  // Give up on an attempt after a while: Windows can sit on a connect to switched-off earbuds and then miss them coming back.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const server = await Promise.race([
+    device.gatt!.connect(),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        device.gatt!.disconnect(); // cancels the pending attempt
+        reject(new Error("The earbuds didn't answer."));
+      }, CONNECT_TIMEOUT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
   const service = await server.getPrimaryService(SERVICE);
   const [w, n] = await Promise.all([service.getCharacteristic(WRITE), service.getCharacteristic(NOTIFY)]);
   let onData: (b: Uint8Array) => void = () => {};

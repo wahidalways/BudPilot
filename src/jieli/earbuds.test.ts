@@ -54,9 +54,27 @@ test("frame reader joins split chunks and skips noise", () => {
   assert.deepEqual(frames.map((f) => f.op), [0x08, 0x09]);
 });
 
-/** Plays the earbud side: answers the handshake, replies to commands with the captured data. */
-function fakeEarbuds() {
+/** Plays the earbud side: answers the handshake, then commands, keeping a settings table the way the real earbuds do:
+ * a touch change sticks and reads back, except in game mode, where they refuse it with code 1 (JieLi SDK).
+ * `ignoreTripleTap`: answer "done" to triple-tap changes but keep the old function (JieLi's reference firmware). */
+function fakeEarbuds({ ignoreTripleTap = false } = {}) {
   const written: Uint8Array[] = [];
+  const settings = Uint8Array.from(SETTINGS);
+  const at: Record<number, number> = {}; // setting type -> offset of its value
+  for (let i = 0; i + 1 < settings.length; i += 1 + settings[i]) at[settings[i + 1]] = i + 2;
+  const answer = (op: number, data: Uint8Array): ArrayLike<number> => {
+    if (op === 0xc1) return settings;
+    if (op === 0x07) return SYSINFO;
+    if (op !== 0xc0) return [];
+    const [, type, ear, taps, fn] = data;
+    if (type === 5) settings[at[5]] = ear; // work mode: 1 normal, 2 game
+    if (type === 2) {
+      if (settings[at[5]] === 2) return [1];
+      if (ignoreTripleTap && taps === 3) return [0];
+      for (let i = at[2]; i + 2 < at[2] + settings[at[2] - 2] - 1; i += 3) if (settings[i] === ear && settings[i + 1] === taps) settings[i + 2] = fn;
+    }
+    return [0];
+  };
   const challenge = hex("00112233445566778899aabbccddeeff");
   let stage = 0;
   let send: (b: Uint8Array) => void = () => {};
@@ -68,7 +86,7 @@ function fakeEarbuds() {
       send(hex("0270617373"));
     } else {
       const [op, sn] = [b[4], b[7]];
-      const frame = encodeFrame(0, op, [0, sn, ...(op === 0xc1 ? SETTINGS : op === 0x07 ? SYSINFO : [])]);
+      const frame = encodeFrame(0, op, [0, sn, ...answer(op, b.subarray(8, b.length - 1))]);
       send(frame.subarray(0, 20)); // BLE may split a reply across notifications
       send(frame.subarray(20));
     }
@@ -102,18 +120,53 @@ test("opens over a fake link, then switches to transparency with the stored gain
   assert.deepEqual(e.state.eqPresets.find((p) => p.mode === 9)?.gains, [-5, 0, 0, 0, 0, 3, 0, 1, 0, 5]);
 
   await e.setKey(1, 3, 4);
-  assert.deepEqual(written.at(-1), hex("fe dc ba c0 c0 00 06 06 04 02 01 03 04 ef"));
+  assert.deepEqual(written.at(-2), hex("fe dc ba c0 c0 00 06 06 04 02 01 03 04 ef"));
+  assert.deepEqual(written.at(-1), hex("fe dc ba c0 c1 00 05 07 00 00 00 04 ef")); // then reads the keys back
   assert.deepEqual(e.state.keys.find((k) => k.ear === 1 && k.taps === 3), { ear: 1, taps: 3, fn: 4 });
 
   // the same bytes hoco.music sends (WearTestBean "FFFDF60%s", 2 = on)
   await e.setWearDetection(true);
-  assert.deepEqual(written.at(-1), hex("fe dc ba c0 ff 00 05 07 ff fd f6 02 ef"));
+  assert.deepEqual(written.at(-1), hex("fe dc ba c0 ff 00 05 08 ff fd f6 02 ef"));
   assert.equal(e.state.wearDetection, true);
 
   // Mid noise cancelling: current = 0.5 of max 0x4000 (the earbuds read this back exactly)
   await e.setAnc(1, 0.5);
-  assert.deepEqual(written.at(-1), hex("fe dc ba c0 08 00 0d 08 ff 0a 0d 01 40 00 40 00 20 00 20 00 ef"));
+  assert.deepEqual(written.at(-1), hex("fe dc ba c0 08 00 0d 09 ff 0a 0d 01 40 00 40 00 20 00 20 00 ef"));
   assert.equal(e.state.ancLevel, 0.5);
+});
+
+/** A written command as "op: data" in hex, without the frame around it. */
+const cmd = (w: Uint8Array) => `${w[4].toString(16)}: ${[...w.subarray(8, w.length - 1)].map((b) => b.toString(16).padStart(2, "0")).join(" ")}`;
+
+test("in game mode the earbuds refuse touch changes: BudPilot steps out of it for the change, then back", async () => {
+  const { t, written } = fakeEarbuds();
+  const e = await Earbuds.open(t, () => {});
+  await e.setGameMode(true);
+  const before = written.length;
+  await e.setKey(2, 2, 10); // right double tap: Volume Down
+  assert.deepEqual(written.slice(before).map(cmd), [
+    "c0: 04 02 02 02 0a", // refused (code 1)
+    "c0: 02 05 01", // normal mode
+    "c0: 04 02 02 02 0a", // taken
+    "c0: 02 05 02", // game mode again
+    "c1: 00 00 00 04", // read the keys back
+  ]);
+  assert.deepEqual(e.state.keys.find((k) => k.ear === 2 && k.taps === 2), { ear: 2, taps: 2, fn: 10 });
+  assert.equal(e.state.gameMode, true);
+});
+
+test("a touch change the earbuds don't keep is reported, not shown as done", async () => {
+  const { t } = fakeEarbuds({ ignoreTripleTap: true });
+  const e = await Earbuds.open(t, () => {});
+  await assert.rejects(e.setKey(1, 3, 4), /didn't take/);
+  assert.deepEqual(e.state.keys.find((k) => k.ear === 1 && k.taps === 3), { ear: 1, taps: 3, fn: 3 }); // still what they hold
+});
+
+test("reads the earbuds' own volume (attr 1) and whether sound is streaming", () => {
+  assert.equal(decodeSysInfo(hex("ff 02 01 0f")).volume, 15); // 2026-11-22
+  assert.equal(decodeSysInfo(SYSINFO).volume, 12);
+  assert.equal(decodeSysInfo(hex("00 02 07 01")).playing, true); // pushed when Chrome started playing
+  assert.equal(decodeSysInfo(hex("00 02 07 00")).playing, false);
 });
 
 test("reads noise strength from the earbuds' report", () => {
@@ -135,9 +188,9 @@ test("refuses custom commands that aren't on the allow list", async () => {
   await assert.rejects(c.request(0xff, [0xff, 0xfd, 0xf6, 0x02]), /blocked/);
 });
 
-test("sets the noise-mode list right after the handshake, before reading anything", async () => {
+test("sets the press-and-hold list in the format hoco.music uses", async () => {
   const { t, written } = fakeEarbuds();
-  await Earbuds.open(t, () => {}, noiseModeMask([0]));
-  // written[0..2] are the handshake; then Off only (bit 0 = 1), in the format hoco.music uses
-  assert.deepEqual(written[3], hex("fe dc ba c0 c0 00 07 01 05 0a 00 00 00 01 ef"));
+  const e = await Earbuds.open(t, () => {});
+  await e.setNoiseModes(noiseModeMask([0, 1, 2]));
+  assert.equal(cmd(written.at(-1)!), "c0: 05 0a 00 00 00 07");
 });

@@ -6,7 +6,7 @@ Control your Bluetooth earbuds from your phone and your PC: noise control, EQ an
 
 ## Status
 
-Version 0.3.0, Windows first.
+Version 0.4.0, Windows first.
 
 - [x] Bluetooth handshake with JieLi-based earbuds, tested on a real HOCO EQ35 ANC
 - [x] Battery for each earbud and the case
@@ -21,7 +21,7 @@ Version 0.3.0, Windows first.
 
 ### Keeping your noise setting
 
-The earbuds' firmware turns ANC on by itself about a second after they power up, and again when they're put in or taken out. They can't be told to remember a mode. So BudPilot remembers it: the moment it connects, it limits the earbuds to the one mode you chose, so the firmware has nothing else to switch to, and it switches back within a fraction of a second if anything still slips through. This works while BudPilot is running, which is why it stays in the tray and can start with Windows.
+The earbuds' firmware turns ANC on by itself about a second after they power up, and again when they're put in or taken out. They can't be told to remember a mode. So BudPilot remembers it: when the firmware switches by itself, BudPilot switches back within a fraction of a second. A switch you make with press and hold on the earbuds becomes your new choice. This works while BudPilot is running, which is why it stays in the tray and can start with Windows.
 
 Adaptive noise cancelling is BudPilot's own too: the earbuds have no adaptive mode, so BudPilot picks Low, Mid or High from how loud the room is, using a microphone on the computer (never the earbuds'). Only the loudness is used; nothing is recorded.
 
@@ -60,7 +60,9 @@ The Windows app is the Expo web build inside an Electron window ([desktop/](desk
 
 The exe isn't code-signed, so Windows SmartScreen may warn on first start: choose **More info**, then **Run anyway**.
 
-Closing the window keeps BudPilot running in the tray (it needs to, to keep your noise setting). Use the tray icon to open it, turn **Start with Windows** on or off, or quit.
+Closing the window keeps BudPilot running in the tray (it needs to, to keep your noise setting). Use the tray icon to open it or quit. **Start with Windows** is on the Controls tab (and in the tray menu); a newer exe takes over Start with Windows from an older one by itself.
+
+BudPilot connects by itself whenever the earbuds are around. If it ever loses them, `%APPDATA%\BudPilot\connection.log` shows what happened: every connect and drop, when Windows connected the earbuds, whether they were advertising, and what they sent just before a drop.
 
 ### Android app
 

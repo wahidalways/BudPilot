@@ -5,7 +5,8 @@ import type { Earbuds, EarbudsState } from "@/jieli/earbuds";
 import { gameEqSteps, type SavedEq } from "@/utils/game";
 import { loadPref, savePref } from "@/utils/prefs";
 
-/** What Game mode does. Noise control is not part of it: the Sound tab's setting stays in charge. */
+/** What Game mode does: lowest delay, and (if `eq`) the Footsteps EQ while it's on. Noise control is not part of it:
+ * the Sound setting stays in charge. */
 export type GamePrefs = { manual: boolean; auto: boolean; eq: boolean };
 
 const GAME_KEY = "budpilot.game";
@@ -83,5 +84,16 @@ export function useGameMode({ state, connected, run }: Deps) {
     })();
   }, [eqWanted, connected, run]);
 
-  return { prefs, update, active, byGame, fullscreen, setOn };
+  /** Footsteps EQ off for an EQ the user picked while it played: the put-back above plays that one, not the old one. */
+  const leaveFootsteps = useCallback(
+    (mode: number) => {
+      const saved = loadPref<SavedEq>(SAVED_EQ_KEY);
+      if (saved) savePref(SAVED_EQ_KEY, { ...saved, mode });
+      update({ eq: false });
+    },
+    [update],
+  );
+
+  /** `footsteps`: the Footsteps EQ is playing now (it uses the Custom slot, so the EQ shows "Footsteps", not Custom). */
+  return { prefs, update, active, byGame, fullscreen, setOn, footsteps: eqWanted, leaveFootsteps };
 }

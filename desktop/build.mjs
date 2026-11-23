@@ -20,9 +20,9 @@ await build({
     productName: "BudPilot",
     copyright: "Copyright (c) 2026 wahidalways",
     extraMetadata: { version }, // one version for every platform: the root package.json
-    files: ["main.js", "web/**/*"],
+    files: ["main.js", "preload.js", "icon.ico", "tray-light.ico", "tray-dark.ico", "web/**/*"],
     directories: { output: "release" },
-    win: { icon: "../assets/images/icon.png" },
+    win: { icon: "icon.ico" }, // BudPilot's mark, 16 to 256 px
     portable: { artifactName: "BudPilot-${version}.exe" },
   },
 });

@@ -21,6 +21,10 @@ export type EarbudsState = {
   gameMode: boolean;
   /** Hoco wear detection; undefined until the earbuds report it (other models may not have it). */
   wearDetection?: boolean;
+  /** The earbuds' own volume step: their volume taps change it, and Windows hands them its volume while sound plays. */
+  volume?: number;
+  /** Sound is streaming to the earbuds (they announce it starting, and stopping a few seconds after a pause). */
+  playing?: boolean;
 };
 
 // Hoco firmware custom command (hoco.music WearTestBean): FF FD F6 + 00 query / 01 off / 02 on.
@@ -29,19 +33,29 @@ const WEAR = [0xff, 0xfd, 0xf6];
 export const decodeWear = (data: Uint8Array): boolean | undefined =>
   WEAR.every((b, i) => data[i] === b) && (data[3] === 1 || data[3] === 2) ? data[3] === 2 : undefined;
 
-const ATTR = { eq: 4, eqPresets: 12, anc: 13, ancAll: 14 } as const;
+const ATTR = { volume: 1, eq: 4, eqPresets: 12, anc: 13, ancAll: 14 } as const;
 const SETTING = { battery: 0, name: 1, keys: 2, workMode: 5, noiseModeList: 10 } as const;
+/** Result codes of a settings change (0xC0), from JieLi's SDK (JL_TwsManager.h, kJL_MANAGER_HEADSET_SET_ERR). */
+const SET_REFUSED_IN_GAME_MODE = 1;
+const SET_ERRORS: Record<number, string> = {
+  1: "The earbuds won't take that change in Game mode. Turn Game mode off and try again.",
+  2: "That name is too long for the earbuds.",
+  3: "The earbuds can't change that right now.",
+};
 
 /** Noise-mode list bitmask (ADV type 10, hoco.music setSelectVoiceModeList): bit n = mode n allowed. */
 export const noiseModeMask = (modes: number[]) => modes.reduce((m, n) => m | (1 << n), 0);
-const SYS_MASK = (1 << ATTR.eq) | (1 << ATTR.eqPresets) | (1 << ATTR.anc) | (1 << ATTR.ancAll);
-const REFRESH_MASK = (1 << ATTR.eq) | (1 << ATTR.anc);
+const SYS_MASK = (1 << ATTR.volume) | (1 << ATTR.eq) | (1 << ATTR.eqPresets) | (1 << ATTR.anc) | (1 << ATTR.ancAll);
+const REFRESH_MASK = (1 << ATTR.volume) | (1 << ATTR.eq) | (1 << ATTR.anc);
 
 const u32 = (n: number) => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
 const s8 = (b: number) => (b << 24) >> 24;
 const u16 = (b: ArrayLike<number>, i: number) => (b[i] << 8) | b[i + 1];
 /** current L / max L from noise gain bytes [maxL, maxR, curL, curR]. */
 const ancLevelOf = (g: ArrayLike<number>) => (g.length >= 8 && u16(g, 0) ? u16(g, 4) / u16(g, 0) : undefined);
+
+/** The strength the earbuds have stored for a noise mode (what press and hold switches to), as a share of max. */
+export const storedAncLevel = (s: EarbudsState, mode: number) => (s.ancGains[mode] ? ancLevelOf(s.ancGains[mode]) : undefined);
 
 /** Bit 7 = charging, low 7 bits = percent, 0 = not there (e.g. a bud outside the case's reach). */
 export const decodeBattery = (b: number): Battery => (b ? { percent: b & 0x7f, charging: (b & 0x80) !== 0 } : null);
@@ -65,8 +79,13 @@ export function decodeSettings(data: Uint8Array): Partial<EarbudsState> {
   return out;
 }
 
-/** Decodes a 0x07 reply or a 0x09 push: FF (common function) + attribute TLVs. */
+/** Decodes a 0x07 reply or a 0x09 push: FF (common function) + attribute TLVs; or 00 (Bluetooth function), whose
+ * attribute 7 says whether sound is streaming (pushed as 00 02 07 01 / 00, seen with Chrome playing and pausing). */
 export function decodeSysInfo(data: Uint8Array): Partial<EarbudsState> {
+  if (data[0] === 0x00) {
+    const playing = parseTlvs(data.subarray(1)).get(7);
+    return playing?.length ? { playing: playing[0] === 1 } : {};
+  }
   if (data[0] !== 0xff) return {};
   const t = parseTlvs(data.subarray(1));
   const out: Partial<EarbudsState> = {};
@@ -74,6 +93,8 @@ export function decodeSysInfo(data: Uint8Array): Partial<EarbudsState> {
   const ancAll = t.get(ATTR.ancAll);
   const eq = t.get(ATTR.eq);
   const presets = t.get(ATTR.eqPresets);
+  const volume = t.get(ATTR.volume);
+  if (volume?.length) out.volume = volume[0];
   if (anc) {
     out.anc = anc[0];
     out.ancLevel = anc[0] ? ancLevelOf(anc.subarray(1)) : undefined;
@@ -136,12 +157,10 @@ export class Earbuds {
     };
   }
 
-  /** Handshake, then read everything the screen shows. `noiseModes` (a mask) is set first thing, before the
-   * earbuds' firmware gets to switch noise modes on its own after powering up. */
-  static async open(t: Transport, onChange: (s: EarbudsState) => void, noiseModes?: number): Promise<Earbuds> {
+  /** Handshake, then read everything the screen shows. */
+  static async open(t: Transport, onChange: (s: EarbudsState) => void): Promise<Earbuds> {
     const e = new Earbuds(t, onChange);
     await e.client.handshake();
-    if (noiseModes !== undefined) await e.setNoiseModes(noiseModes).catch(() => {});
     const settings = decodeSettings(await e.client.request(OP.getSettings, u32(0xffffffff)));
     const sys = decodeSysInfo(await e.client.request(OP.getSysInfo, [0xff, ...u32(SYS_MASK)]));
     e.state = { ...e.state, ...settings, ...sys };
@@ -182,12 +201,34 @@ export class Earbuds {
     });
   }
 
-  async setKey(ear: number, taps: number, fn: number) {
-    await this.client.request(OP.setSettings, tlv(SETTING.keys, [ear, taps, fn]));
-    this.update({ keys: this.state.keys.map((k) => (k.ear === ear && k.taps === taps ? { ear, taps, fn } : k)) });
+  /** Re-reads just the volume (cheap): the earbuds don't always announce a change from their volume taps. */
+  async refreshVolume() {
+    const { volume } = decodeSysInfo(await this.client.request(OP.getSysInfo, [0xff, ...u32(1 << ATTR.volume)]));
+    if (volume !== undefined && volume !== this.state.volume) this.update({ volume });
   }
 
-  /** Which noise modes the earbuds may switch to by themselves (their button and power-up). Resets at power-up. */
+  /** Sets one touch gesture, and only reports success once the earbuds hold it. They answer every settings change
+   * with a result code (JieLi SDK: 0 done, 1 refused in game mode); in game (low-latency) mode they refuse touch
+   * changes, so BudPilot steps out of it for the change and straight back. */
+  async setKey(ear: number, taps: number, fn: number) {
+    const send = async () => (await this.client.request(OP.setSettings, tlv(SETTING.keys, [ear, taps, fn])))[0] ?? 0;
+    let code = await send();
+    if (code === SET_REFUSED_IN_GAME_MODE && this.state.gameMode) {
+      await this.setGameMode(false);
+      try {
+        code = await send();
+      } finally {
+        await this.setGameMode(true);
+      }
+    }
+    if (code !== 0) throw new Error(SET_ERRORS[code] ?? `The earbuds refused that change (code ${code}).`);
+    // read back what the earbuds now hold: firmware can accept a change it doesn't support and ignore it
+    const keys = decodeSettings(await this.client.request(OP.getSettings, u32(1 << SETTING.keys))).keys;
+    if (keys) this.update({ keys });
+    if (!keys?.some((k) => k.ear === ear && k.taps === taps && k.fn === fn)) throw new Error("The earbuds didn't take that change. Try again.");
+  }
+
+  /** The noise modes press and hold cycles through (JieLi ADV type 10, the anc_voice_key mask). */
   async setNoiseModes(mask: number) {
     await this.client.request(OP.setSettings, tlv(SETTING.noiseModeList, u32(mask)));
   }

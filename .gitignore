@@ -52,3 +52,6 @@ credentials/
 # desktop (Electron) build output
 desktop/web/
 desktop/release/
+
+# design mocks stay local
+artifacts/
