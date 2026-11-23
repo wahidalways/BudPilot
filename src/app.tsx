@@ -5,6 +5,7 @@ import { Inter_600SemiBold } from "@expo-google-fonts/inter/600SemiBold";
 import { Sora_600SemiBold } from "@expo-google-fonts/sora/600SemiBold";
 import { Sora_700Bold } from "@expo-google-fonts/sora/700Bold";
 import { useFonts } from "expo-font";
+import { lazy, Suspense } from "react";
 import { Platform, StyleSheet, View } from "react-native";
 
 import { desktop } from "@/hooks/use-desktop";
@@ -31,9 +32,20 @@ if (WEB) {
 
 const tellShell = (t: ThemeChoice) => desktop()?.setTheme(t);
 
+// Development only: ?phone shows the Android screens in the browser, on sample earbuds (production builds fold this away)
+const PhonePreview = __DEV__ && WEB && new URLSearchParams(location.search).has("phone") ? lazy(() => import("@/mobile/preview")) : null;
+
 export default function App() {
   const [loaded, failed] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Sora_600SemiBold, Sora_700Bold });
   if (!loaded && !failed) return null; // bundled, so this is a moment; without it text would flash in a fallback font
+  if (PhonePreview)
+    return (
+      <ThemeProvider>
+        <Suspense fallback={null}>
+          <PhonePreview />
+        </Suspense>
+      </ThemeProvider>
+    );
   return (
     <ThemeProvider onTheme={tellShell}>
       <Frost />

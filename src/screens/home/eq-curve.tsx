@@ -18,10 +18,11 @@ type Props = {
   onChange: (gains: number[]) => void;
   /** once per gesture or key press, when the curve should be sent */
   onCommit: (gains: number[]) => void;
+  /** phones: drawn at this height and its real width, so labels and points keep their size (otherwise the 600 × 240
+   * drawing scales to fit, as in the Windows app) */
+  height?: number;
 };
 
-const W = 600;
-const H = 240;
 const L = 44; // room for the dB labels
 const R = 20;
 const T = 24;
@@ -38,9 +39,12 @@ export function EqCurve({
   readOnly,
   onChange,
   onCommit,
+  height,
 }: Props) {
   const c = useColors();
   const [width, setWidth] = useState(0);
+  const W = height ? Math.max(width, 1) : 600;
+  const H = height ?? 240;
   const [focused, setFocused] = useState<number>();
   const drag = useRef<{
     band: number;
@@ -103,84 +107,89 @@ export function EqCurve({
   const band = focused ?? 0;
 
   return (
-    <View style={s.wrap} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
-      <Svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`}>
-        <G>
-          {[-max, 0, max].map((g) => (
-            <G key={g}>
-              <Line
-                x1={L}
-                x2={W - R}
-                y1={y(g)}
-                y2={y(g)}
-                stroke={g === 0 ? c.ink2 : c.hair}
-                strokeWidth={1}
-                strokeDasharray={g === 0 ? "3 4" : undefined}
-              />
-              <SvgText
-                x={L - 8}
-                y={y(g) + 4}
-                textAnchor="end"
-                fontFamily={F.regular}
-                fontSize={11}
-                fill={c.ink2}
-              >
-                {signed(g)}
-              </SvgText>
-            </G>
-          ))}
-          {bands.map((name, i) => (
-            <G key={name}>
-              <Line
-                x1={x(i)}
-                x2={x(i)}
-                y1={T}
-                y2={H - B}
-                stroke={c.hair}
-                strokeWidth={1}
-              />
-              <SvgText
-                x={x(i)}
-                y={H - 12}
-                textAnchor="middle"
-                fontFamily={F.regular}
-                fontSize={11}
-                fill={c.ink2}
-              >
-                {name}
-              </SvgText>
-            </G>
-          ))}
-        </G>
-        <G opacity={faded ? 0.35 : 1}>
-          <Path d={area} fill={c.tint} />
-          <Path d={curve} fill="none" stroke={c.signal} strokeWidth={2.5} />
-          {pts.map(([px, py], i) => (
-            <G key={i}>
-              <Circle
-                cx={px}
-                cy={py}
-                r={8}
-                fill={c.surface}
-                stroke={c.signal}
-                strokeWidth={focused === i ? 4 : 2.5}
-              />
-              {gains[i] !== 0 && (
+    <View
+      style={height ? { width: "100%", height } : s.wrap}
+      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+    >
+      {(!height || width > 0) && (
+        <Svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`}>
+          <G>
+            {[-max, 0, max].map((g) => (
+              <G key={g}>
+                <Line
+                  x1={L}
+                  x2={W - R}
+                  y1={y(g)}
+                  y2={y(g)}
+                  stroke={g === 0 ? c.ink2 : c.hair}
+                  strokeWidth={1}
+                  strokeDasharray={g === 0 ? "3 4" : undefined}
+                />
                 <SvgText
-                  x={px}
-                  y={gains[i] < 0 ? py + 24 : py - 14} // cuts label below their point, clear of the 0 line
-                  textAnchor="middle"
-                  fontFamily={F.semibold}
+                  x={L - 8}
+                  y={y(g) + 4}
+                  textAnchor="end"
+                  fontFamily={F.regular}
                   fontSize={11}
-                  fill={c.ink}
+                  fill={c.ink2}
                 >
-                  {signed(gains[i])}
+                  {signed(g)}
                 </SvgText>
-              )}
-            </G>
-          ))}
-        </G>
-      </Svg>
+              </G>
+            ))}
+            {bands.map((name, i) => (
+              <G key={name}>
+                <Line
+                  x1={x(i)}
+                  x2={x(i)}
+                  y1={T}
+                  y2={H - B}
+                  stroke={c.hair}
+                  strokeWidth={1}
+                />
+                <SvgText
+                  x={x(i)}
+                  y={H - 12}
+                  textAnchor="middle"
+                  fontFamily={F.regular}
+                  fontSize={11}
+                  fill={c.ink2}
+                >
+                  {name}
+                </SvgText>
+              </G>
+            ))}
+          </G>
+          <G opacity={faded ? 0.35 : 1}>
+            <Path d={area} fill={c.tint} />
+            <Path d={curve} fill="none" stroke={c.signal} strokeWidth={2.5} />
+            {pts.map(([px, py], i) => (
+              <G key={i}>
+                <Circle
+                  cx={px}
+                  cy={py}
+                  r={8}
+                  fill={c.surface}
+                  stroke={c.signal}
+                  strokeWidth={focused === i ? 4 : 2.5}
+                />
+                {gains[i] !== 0 && (
+                  <SvgText
+                    x={px}
+                    y={gains[i] < 0 ? py + 24 : py - 14} // cuts label below their point, clear of the 0 line
+                    textAnchor="middle"
+                    fontFamily={F.semibold}
+                    fontSize={11}
+                    fill={c.ink}
+                  >
+                    {signed(gains[i])}
+                  </SvgText>
+                )}
+              </G>
+            ))}
+          </G>
+        </Svg>
+      )}
       {!readOnly && (
         <View
           style={StyleSheet.absoluteFill}
@@ -237,5 +246,5 @@ export function EqCurve({
 }
 
 const s = StyleSheet.create({
-  wrap: { width: "100%", aspectRatio: W / H },
+  wrap: { width: "100%", aspectRatio: 600 / 240 },
 });

@@ -1,5 +1,5 @@
-// Small settings kept on this computer. Storage can be missing or blocked, so every access is guarded.
-// shortcut: web/Electron localStorage only; Android needs AsyncStorage when its build starts.
+// Small settings kept on this device. Storage can be missing or blocked, so every access is guarded.
+// Android gets localStorage from expo-sqlite (installed in app.native.tsx), so the keys are the same as on Windows.
 
 export function loadPref<T>(key: string): T | undefined {
   try {

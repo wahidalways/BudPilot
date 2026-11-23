@@ -23,10 +23,17 @@ type Bluetooth = { requestDevice(options: object): Promise<Device> };
 let known: Device | undefined; // the earbuds picked last, so reconnecting needs no device picker
 
 export const hasKnownEarbuds = () => !!known;
+/** The browser asks for Bluetooth in its own device picker, so there's nothing to ask for ahead of it. */
+export const needsLocation = () => false;
+export const requestBluetoothAccess = async (): Promise<"granted" | "denied" | "blocked"> => "granted";
+
+/** The phone screens' browser preview (development only) sets this to try them on sample earbuds. */
+export const usingSample = () => !!(globalThis as { __shonoSample?: boolean }).__shonoSample;
 
 /** Asks the browser (or the Electron shell) for the earbuds and opens the JieLi channel.
  * `reuse` reconnects to the earbuds picked before, e.g. after they went back in the case. */
 export async function connectEarbuds({ reuse = false } = {}): Promise<Transport> {
+  if (usingSample()) return (await import("@/jieli/sample")).sampleTransport();
   const bluetooth = (navigator as Navigator & { bluetooth?: Bluetooth }).bluetooth;
   if (!bluetooth) throw new Error("Bluetooth isn't available here. Use the Shono app, Edge or Chrome.");
   let device: Device;

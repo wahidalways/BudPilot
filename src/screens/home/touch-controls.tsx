@@ -13,8 +13,8 @@ const EARS = [
   { ear: 1, label: "Left" },
   { ear: 2, label: "Right" },
 ];
-const gesture = (taps: number) => ["Tap", "Double tap", "Triple tap"][taps - 1] ?? `${taps} taps`;
-const fnName = (fn: number) => P.keyFunctions.find((f) => f.fn === fn)?.name ?? `Other (${fn})`;
+export const gesture = (taps: number) => ["Tap", "Double tap", "Triple tap"][taps - 1] ?? `${taps} taps`;
+export const fnName = (fn: number) => P.keyFunctions.find((f) => f.fn === fn)?.name ?? `Other (${fn})`;
 
 function Taps({ n, color, column }: { n: number; color: string; column?: boolean }) {
   return (
