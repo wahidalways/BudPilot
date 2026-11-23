@@ -57,5 +57,3 @@ desktop/helper/*.exe
 # design mocks stay local
 artifacts/
 
-# Hoco's product photos (their artwork): on this computer only, see public/device-photos/README.txt
-public/device-photos/

@@ -51,8 +51,7 @@ export const Dots = ({ n, color }: { n: number; color: string }) => (
   </Svg>
 );
 
-// The device photos and brand logos are the makers' artwork, kept on this computer only (public/device-photos is
-// git-ignored); a build server gets them copied in before it builds. shortcut: one model, add a table when there are more.
+// The device photos and the makers' logos (public/device-photos). shortcut: one model, add a table when there are more.
 export const PHOTOS = {
   left: require("../../public/device-photos/eq35/hd/left.webp"),
   right: require("../../public/device-photos/eq35/hd/right.webp"),

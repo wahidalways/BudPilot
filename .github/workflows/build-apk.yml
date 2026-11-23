@@ -31,29 +31,6 @@ jobs:
 
       - run: npm ci
 
-      # The device photos and logo are the maker's artwork, kept off GitHub: they come from repository secrets. Without
-      # the secrets the build still works, with blank pictures in their place.
-      - name: Device photos
-        env:
-          PHOTO_LEFT: ${{ secrets.SHONO_PHOTO_LEFT }}
-          PHOTO_RIGHT: ${{ secrets.SHONO_PHOTO_RIGHT }}
-          PHOTO_CASE: ${{ secrets.SHONO_PHOTO_CASE }}
-          PHOTO_CASE_PLAIN: ${{ secrets.SHONO_PHOTO_CASE_PLAIN }}
-          LOGO_HOCO: ${{ secrets.SHONO_LOGO_HOCO }}
-        run: |
-          set -euo pipefail
-          BLANK_WEBP=UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==
-          BLANK_PNG=iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=
-          put() { # secret value, fallback, file
-            if [ -n "$1" ]; then echo "$1" | base64 -d > "$3"; else echo "::warning::$3 is blank (its secret isn't set)"; echo "$2" | base64 -d > "$3"; fi
-          }
-          mkdir -p public/device-photos/eq35/hd
-          put "$PHOTO_LEFT" "$BLANK_WEBP" public/device-photos/eq35/hd/left.webp
-          put "$PHOTO_RIGHT" "$BLANK_WEBP" public/device-photos/eq35/hd/right.webp
-          put "$PHOTO_CASE" "$BLANK_WEBP" public/device-photos/eq35/hd/case.webp
-          put "$PHOTO_CASE_PLAIN" "$BLANK_WEBP" public/device-photos/eq35/hd/case-plain.webp
-          put "$LOGO_HOCO" "$BLANK_PNG" public/device-photos/hoco-logo.png
-
       # The native project from app.json and the plugins, as EAS makes it.
       - run: npx expo prebuild --platform android --no-install
 
