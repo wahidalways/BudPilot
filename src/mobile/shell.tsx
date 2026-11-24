@@ -7,8 +7,8 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { BlurTargetView } from "expo-blur";
 import { NavigationBar } from "expo-navigation-bar";
-import { type ComponentProps, type ComponentRef, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
-import { BackHandler, Pressable, ScrollView, StatusBar, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { type ComponentProps, type ComponentRef, memo, type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { AppState, BackHandler, ScrollView, StatusBar, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import Animated, {
   Easing,
   FadeIn,
@@ -24,21 +24,22 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { type BudPilot, modeName, useBudPilot } from "@/screens/home/use-bud-pilot";
-import { F, useColors, useTheme } from "@/theme";
+import { F, KeepColors, useColors, useTheme } from "@/theme";
 import { seconds } from "@/utils/corrections";
 import { later } from "@/utils/later";
 import { loadPref, savePref } from "@/utils/prefs";
 
-import { EarbudsGlyph } from "./art";
+import { CaseGlyph } from "./art";
 import { askBackgroundUnrestricted, backgroundUnrestricted } from "../../modules/shono-keeper";
 import { FindPage } from "./find";
 import { DashboardBoard, EDGE, SidePanel, TabletBar } from "./dashboard";
 import { HomeCards, markWelcomed, type TourRefs } from "./home";
 import { BluetoothGate } from "./bluetooth-gate";
-import { Backdrop, FrostBar, Glass, PageActive, useGround } from "./glass";
+import { Backdrop, FrostBar, Glass, groundOf, PageActive, useSurface } from "./glass";
 import { useKeeper } from "./keeper";
-import { Mark, Onboarding, type Rect, Tour, type TourStop } from "./onboarding";
-import { Button, Press, tick, Txt } from "./kit";
+import { Launch } from "./launch";
+import { Onboarding, type Rect, Tour, type TourStop } from "./onboarding";
+import { Button, GearButton, Mark, Press, TAGLINE, tick, Txt } from "./kit";
 import { AppContent, EqPage, GamePage, SoundPage, TouchPage } from "./pages";
 import { Sheet, Toast } from "./sheet";
 
@@ -55,10 +56,11 @@ const PHONE_TABS: [Tab, string][] = [
 // a phone's pages: its tabs, and Find, which opens from Home (the Home tab stays lit there)
 const PHONE_PAGES: [Tab, string][] = [...PHONE_TABS, ["find", "Find"]];
 const COLUMN = 760; // an upright tablet's content column
-const BAR = 56; // the top bar's height under the status bar; the large titles sit on its middle line
+const BAR = 64; // the top bar's height under the status bar (Material's; 56 crowded the title); the large titles sit on its middle line
 const COLLAPSE = 44; // scrolling this far turns a page's large title into the bar's small one
 const SMALL = 17; // the collapsed title's size
 const TITLE_H = 40; // the large title's line, the same in the bar and in the page (where a gap holds its place)
+const HOME_LIFT = 7; // Home's name rises this much to make room for the tagline under it
 const TITLES: Record<Tab, string> = { home: "Shono", sound: "Sound", eq: "Equalizer", game: "Game", touch: "Touch controls", find: "Find my earbuds", app: "App" };
 const LEDES: Partial<Record<Tab, string>> = {
   sound: "What the room sounds like in your ears.",
@@ -68,8 +70,8 @@ const LEDES: Partial<Record<Tab, string>> = {
   app: "Look and feel, and the earbuds Shono talks to.",
 };
 
-// Apple-style glyphs (Ionicons), as in iOS tab bars: an outline at rest, filled when chosen. Home is the earbuds
-// (drawn in art.tsx to match): the page is about them, and the user didn't like a house.
+// Apple-style glyphs (Ionicons), as in iOS tab bars: an outline at rest, filled when chosen. Home is the earbuds' case
+// (drawn in art.tsx to match; the user's pick): the page is about them, and the user didn't like a house.
 type Glyph = ComponentProps<typeof Ionicons>["name"];
 const GLYPHS: Record<Exclude<Tab, "home">, [Glyph, Glyph]> = {
   sound: ["ear-outline", "ear"],
@@ -80,7 +82,7 @@ const GLYPHS: Record<Exclude<Tab, "home">, [Glyph, Glyph]> = {
   app: ["settings-outline", "settings"],
 };
 const TabIcon = ({ tab, on, color }: { tab: Tab; on: boolean; color: string }) =>
-  tab === "home" ? <EarbudsGlyph on={on} color={color} size={27} /* a touch larger: the buds are slimmer than their neighbours */ /> : <Ionicons name={GLYPHS[tab][on ? 1 : 0]} size={25} color={color} />;
+  tab === "home" ? <CaseGlyph on={on} color={color} size={26} /> : <Ionicons name={GLYPHS[tab][on ? 1 : 0]} size={25} color={color} />;
 
 // What the Windows shell does every few seconds: connect whenever the earbuds are around. Not during the first run: its
 // Connect step asks for Bluetooth access first, then connects.
@@ -137,10 +139,20 @@ function usePutBackNote(b: BudPilot) {
   };
 }
 
+/** A page out of sight keeps its last render: the earbuds' updates (every few seconds) re-render only the page on
+ * screen. A new theme still reaches it (context passes through). */
+const Still = memo(
+  function Still({ children }: { active: boolean; children: ReactNode }) {
+    return children;
+  },
+  (_, next) => !next.active,
+);
+
 /** A page: slides in from the side of its tab and fades. While it's the one showing, `barY` follows its scroll (the
- * phone's top bar fills in from it). */
+ * phone's top bar fills in from it). `covered`: a sheet is over it, so its looping animations rest. */
 function Page({
   active,
+  covered,
   dir,
   title,
   lede,
@@ -153,6 +165,7 @@ function Page({
   children,
 }: {
   active: boolean;
+  covered: boolean;
   dir: number;
   title?: string;
   lede?: string;
@@ -183,6 +196,8 @@ function Page({
     if (shown.get()) barY?.set(e.contentOffset.y);
   });
   return (
+    // its own colours: out of sight it keeps the ones it showed, and a new theme reaches it when it's shown again
+    <KeepColors live={active}>
     <Animated.View pointerEvents={active ? "auto" : "none"} accessibilityElementsHidden={!active} importantForAccessibility={active ? "auto" : "no-hide-descendants"} style={[StyleSheet.absoluteFill, move]}>
       <Animated.ScrollView
         ref={scrollRef}
@@ -206,9 +221,13 @@ function Page({
             {lede ? <Txt v="sub" style={s.lede}>{lede}</Txt> : null}
           </View>
         ) : null}
-        <PageActive value={active}>{opened ? children : null}</PageActive>
+        <PageActive value={active && !covered}>
+          {/* `active` too: the first render's own set can be dropped (see Sheet) */}
+          <Still active={active}>{opened || active ? children : null}</Still>
+        </PageActive>
       </Animated.ScrollView>
     </Animated.View>
+    </KeepColors>
   );
 }
 
@@ -223,6 +242,7 @@ function TopBar({
   y,
   target,
   onGear,
+  attention,
   edge = 16,
 }: {
   title: string;
@@ -231,9 +251,11 @@ function TopBar({
   y: SharedValue<number>;
   target: RefObject<ViewNode | null>;
   onGear: () => void;
+  attention: boolean;
   edge?: number;
 }) {
   const c = useColors();
+  const surface = useSurface();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const big = home ? 21 : 30; // Home's name is smaller beside its mark
@@ -241,10 +263,13 @@ function TopBar({
   const left = (home ? 58 : 20) + inset; // where the large title starts: the page's text edge, or after Home's mark
   const w = useSharedValue(0); // the large title's width, for centring it
   const fill = useAnimatedStyle(() => ({ opacity: interpolate(y.get(), [4, 22], [0, 1], "clamp") }));
+  // Home's name sits a little above the middle line, its tagline under it, the pair centred on the mark; collapsing, the
+  // name settles back onto the middle line
+  const lift = home ? HOME_LIFT : 0;
   const morph = useAnimatedStyle(() => {
     const p = interpolate(y.get(), [0, COLLAPSE], [0, 1], "clamp");
     const k = 1 - p * (1 - SMALL / big);
-    return { transform: [{ translateX: p * (width / 2 - left - (w.get() * k) / 2) }, { scale: k }] };
+    return { transform: [{ translateX: p * (width / 2 - left - (w.get() * k) / 2) }, { translateY: p * lift }, { scale: k }] };
   });
   const mark = useAnimatedStyle(() => {
     const p = interpolate(y.get(), [0, COLLAPSE * 0.6], [0, 1], "clamp");
@@ -255,17 +280,24 @@ function TopBar({
     opacity: interpolate(y.get(), [40, 64], [0, 1], "clamp"),
     transform: [{ translateY: interpolate(y.get(), [40, 64], [6, 0], "clamp") }],
   }));
-  const pick = c.dark ? c.signalInk : c.signal;
   return (
-    <View pointerEvents="box-none" style={[s.bar, { height: insets.top + BAR, paddingTop: insets.top, paddingHorizontal: 10 + inset }]}>
+    <View pointerEvents="box-none" style={[s.bar, { height: insets.top + BAR, paddingTop: insets.top, paddingRight: 18 + inset /* mirrors the mark */ }]}>
       <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, fill]}>
         <FrostBar target={target} style={StyleSheet.absoluteFill} />
       </Animated.View>
       {back ? (
         <>
-          <Press accessibilityRole="button" accessibilityLabel="Back to Home" hitSlop={6} onPress={back} style={[s.back, { top: insets.top, left: 6 + inset }]}>
-            <Ionicons name="chevron-back" size={24} color={pick} />
-            <Text style={[s.backLabel, { color: pick }]}>Home</Text>
+          {/* a glass pill like the gear's, 18 in from the edge as the gear is on the other side (it sat 6 from the edge) */}
+          <Press
+            accessibilityRole="button"
+            accessibilityLabel="Back to Home"
+            hitSlop={8}
+            scale={0.92}
+            onPress={back}
+            style={[s.back, { top: insets.top + (BAR - 36) / 2, left: 18 + inset, backgroundColor: surface.bg, borderColor: surface.edge }]}
+          >
+            <Ionicons name="chevron-back" size={18} color={c.ink} />
+            <Text style={[s.backLabel, { color: c.ink }]}>Home</Text>
           </Press>
           <Animated.Text pointerEvents="none" numberOfLines={1} style={[s.smallTitle, { top: insets.top, color: c.ink }, small]}>
             {title}
@@ -285,14 +317,18 @@ function TopBar({
         accessibilityRole="header"
         numberOfLines={1}
         onLayout={(e) => w.set(e.nativeEvent.layout.width)}
-        style={[s.bigTitle, { left, top: insets.top + (BAR - TITLE_H) / 2, fontSize: big, letterSpacing: home ? -0.3 : -0.6, color: c.ink }, morph]}
+        style={[s.bigTitle, { left, top: insets.top + (BAR - TITLE_H) / 2 - lift, fontSize: big, letterSpacing: home ? -0.3 : -0.6, color: c.ink }, morph]}
       >
         {title}
       </Animated.Text>
       )}
-      <Pressable accessibilityRole="button" accessibilityLabel="App settings" hitSlop={6} onPress={onGear} style={s.gear}>
-        <Ionicons name="settings-outline" size={24} color={c.ink} />
-      </Pressable>
+      {home && (
+        // the tagline under Shono's name (the user: "the logo needs a subtitle"); it leaves with the mark on scrolling
+        <Animated.Text pointerEvents="none" numberOfLines={1} style={[s.barTag, { left, top: insets.top + BAR / 2 + 5, color: c.ink2 }, mark]}>
+          {TAGLINE}
+        </Animated.Text>
+      )}
+      <GearButton onPress={onGear} attention={attention} />
     </View>
   );
 }
@@ -386,8 +422,17 @@ export function MobileApp() {
   const [onboarded, setOnboarded] = useState(() => !!loadPref<boolean>(ONBOARDED_KEY));
   const [tour, setTour] = useState<TourStop[]>(); // the stops, while the tour runs
   const [msg, setMsg] = useState<Note>();
+  const [launching, setLaunching] = useState(true); // the loading screen, at a cold start (launch.tsx)
+  const launched = useCallback(() => setLaunching(false), []);
   useAutoConnect(onboarded);
   const keeperOn = useKeeper(b, onboarded);
+  // the gear's dot: Shono keeps working in the background, but Android may pause it there ("Run without limits" off)
+  const [free, setFree] = useState(backgroundUnrestricted);
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (st) => st === "active" && setFree(backgroundUnrestricted()));
+    return () => sub.remove();
+  }, []);
+  const attention = keeperOn && !free;
   const putBack = usePutBackNote(b);
   const note = msg && (!putBack || msg.at > putBack.at) ? msg : putBack;
   const reduce = useReducedMotion();
@@ -398,8 +443,8 @@ export function MobileApp() {
   const navRef = useRef<ViewNode>(null); // the tab bar, or sideways the gear
   const glassTarget = useRef<ViewNode>(null); // what the bars blur: everything under them
   const barY = useSharedValue(0); // how far the page showing has scrolled
-  const ground = useGround();
-  const topPad = insets.top + 8;
+  const ground = groundOf(c);
+  const topPad = insets.top + (BAR - TITLE_H) / 2; // the page's title gap lines up with the bar's title
   // a card already in view is shown at once; otherwise it's scrolled into view first (the tour used to scroll and
   // wait half a second at every stop: the user, "it takes a second before it moves")
   const card = (key: "device" | "noise" | "eq" | "game" | "touch") => async () => {
@@ -488,7 +533,7 @@ export function MobileApp() {
           {tablet ? (
             <DashboardBoard b={b} sideways={false} width={width} refs={homeRefs} tablet />
           ) : (
-            <HomeCards b={b} onEdit={() => setTab("eq")} onFind={() => setTab("find")} refs={homeRefs} />
+            <HomeCards b={b} onEdit={() => setTab("eq")} onFind={() => setTab("find")} onGame={() => setTab("game")} refs={homeRefs} />
           )}
         </>
       ),
@@ -508,10 +553,14 @@ export function MobileApp() {
       <StatusBar hidden={full} barStyle={c.dark ? "light-content" : "dark-content"} />
       <NavigationBar hidden={full} />
       <BlurTargetView ref={glassTarget} style={[StyleSheet.absoluteFill, { backgroundColor: ground }]}>
-        <Backdrop shift={sideways ? 0 : iCur} />
+        {/* no colours around the pages: each page takes its own (see ThemeProvider's `scoped`) */}
+        <KeepColors>
+          <Backdrop shift={sideways ? 0 : iCur} />
+        </KeepColors>
         {sideways ? (
+          <KeepColors>
           <View style={s.grow}>
-            <TabletBar b={b} onGear={() => setPanel(true)} gearRef={navRef} />
+            <TabletBar b={b} onGear={() => setPanel(true)} gearRef={navRef} attention={attention} />
             <ScrollView
               ref={homeScroll}
               contentContainerStyle={{ paddingLeft: EDGE + insets.left, paddingRight: EDGE + insets.right, paddingTop: 4, paddingBottom: insets.bottom + 24 }}
@@ -519,11 +568,13 @@ export function MobileApp() {
               <DashboardBoard b={b} sideways width={board} refs={homeRefs} tablet />
             </ScrollView>
           </View>
+          </KeepColors>
         ) : (
           pages.map(([k], j) => (
             <Page
               key={k}
               active={k === cur}
+              covered={appOpen || limitsAsk || !!tour}
               dir={dirOf(j)}
               scrollRef={k === "home" ? homeScroll : undefined}
               title={k === "home" ? undefined : TITLES[k]}
@@ -539,13 +590,14 @@ export function MobileApp() {
           ))
         )}
       </BlurTargetView>
+      <KeepColors>
       {sideways ? (
         <SidePanel open={panel} title={TITLES.app} lede={LEDES.app} onClose={() => setPanel(false)} target={glassTarget}>
           <AppContent b={b} onTour={startTour} onFirstRun={firstRunAgain} />
         </SidePanel>
       ) : (
         <>
-          <TopBar title={TITLES[cur]} home={cur === "home"} back={cur === "find" ? () => setTab("home") : undefined} y={barY} target={glassTarget} onGear={() => setAppOpen(true)} edge={edge} />
+          <TopBar title={TITLES[cur]} home={cur === "home"} back={cur === "find" ? () => setTab("home") : undefined} y={barY} target={glassTarget} onGear={() => setAppOpen(true)} attention={attention} edge={edge} />
           <TabBar tabs={tabs} cur={cur} lit={cur === "find" ? "home" : cur} onTab={setTab} navRef={navRef} target={glassTarget} />
           <Sheet open={appOpen} tablet={tablet} title="App" sub="Look and feel, and the earbuds Shono talks to." onClose={() => setAppOpen(false)}>
             <ScrollView style={{ maxHeight: height * (tablet ? 0.56 : 0.68) }} contentContainerStyle={{ paddingBottom: 8 }}>
@@ -577,6 +629,8 @@ export function MobileApp() {
       {!onboarded && <Onboarding b={b} onDone={firstRunDone} />}
       <BluetoothGate onBack={() => !onboarded && b.status === "idle" && void b.connect()} />
       <Toast note={note} />
+      {launching && <Launch ready={!onboarded || b.status === "connected"} onGone={launched} />}
+      </KeepColors>
     </View>
   );
 }
@@ -587,13 +641,13 @@ const s = StyleSheet.create({
   titles: { paddingHorizontal: 4, marginBottom: 14 },
   lede: { marginTop: 4, fontSize: 14 },
   bar: { position: "absolute", top: 0, left: 0, right: 0, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", paddingHorizontal: 10 },
+  barTag: { position: "absolute", fontFamily: F.medium, fontSize: 11.5, lineHeight: 14, transformOrigin: "left center" },
   bigTitle: { position: "absolute", height: TITLE_H, lineHeight: TITLE_H, fontFamily: F.display, transformOrigin: "left center" },
   barMark: { position: "absolute", left: 18 },
   sheetBtns: { gap: 10, paddingTop: 4 },
-  back: { position: "absolute", left: 6, height: BAR, flexDirection: "row", alignItems: "center", paddingRight: 8 },
-  backLabel: { fontFamily: F.medium, fontSize: 16, marginLeft: -2 },
+  back: { position: "absolute", height: 36, borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, flexDirection: "row", alignItems: "center", gap: 2, paddingLeft: 8, paddingRight: 14 },
+  backLabel: { fontFamily: F.semibold, fontSize: 14.5 },
   smallTitle: { position: "absolute", left: 96, right: 96, height: BAR, lineHeight: BAR, textAlign: "center", fontFamily: F.display, fontSize: 17 },
-  gear: { width: 44, height: 44, alignItems: "center", justifyContent: "center", marginRight: -6 },
   tabbar: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", justifyContent: "center", paddingTop: 8, paddingHorizontal: 6 },
   tabs: { flex: 1, flexDirection: "row", maxWidth: 560 },
   rim: { position: "absolute", top: 0, left: 0, right: 0, height: StyleSheet.hairlineWidth }, // a crisp top edge

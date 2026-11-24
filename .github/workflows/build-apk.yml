@@ -1,7 +1,9 @@
 # Builds the Shono APKs on GitHub's machines (the Windows PC has no Java or Android SDK). Runs on every push to the
 # `android` branch, or from the Actions tab; the APKs are attached to the run.
 #   Shono-dev-*.apk      development build: the app's code comes live from `npx expo start` on the PC
-#   Shono-preview-*.apk  code built in, signed with the debug key: for testing only (releases get the real key later)
+#   Shono-<version>-*.apk  the release: code built in, signed with Shono's release key (the ANDROID_KEY* secrets)
+#   Shono-tosign-*.apk     the same, when the secrets aren't set: sign it on the PC (D:\Shono-signing\sign.sh)
+# The two use different keys, so one can't be installed over the other: uninstall first to switch.
 name: Build APK
 
 on:
@@ -39,13 +41,35 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
 
-      - name: Name them
+      - name: Sign and name them
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           V=$(node -p "require('./app.json').expo.version")
           C=$(git rev-parse --short HEAD)
           cp android/app/build/outputs/apk/debug/app-debug.apk "Shono-dev-$V-$C.apk"
-          cp android/app/build/outputs/apk/release/app-release.apk "Shono-preview-$V-$C.apk"
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            # the key stays on the PC: sign this one there (it carries the debug signature, which signing replaces)
+            cp android/app/build/outputs/apk/release/app-release.apk "Shono-tosign-$V-$C.apk"
+            ls -la Shono-*.apk
+            exit 0
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/shono.p12"
+          TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$TOOLS/zipalign" -f -p 4 android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/aligned.apk"
+          "$TOOLS/apksigner" sign \
+            --ks "$RUNNER_TEMP/shono.p12" --ks-type PKCS12 \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --key-pass env:ANDROID_KEY_PASSWORD \
+            --out "Shono-$V-$C.apk" "$RUNNER_TEMP/aligned.apk"
+          rm "$RUNNER_TEMP/shono.p12"
+          "$TOOLS/apksigner" verify --print-certs "Shono-$V-$C.apk" | grep -i "SHA-256"
+          "$TOOLS/aapt2" dump badging "Shono-$V-$C.apk" | head -1
           ls -la Shono-*.apk
 
       - uses: actions/upload-artifact@v4

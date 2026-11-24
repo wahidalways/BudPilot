@@ -26,6 +26,7 @@ type KeeperModule = {
   setLastSeen(enabled: boolean, address: string | null): void;
   getLastSeen(): Promise<LastSeenPlace | null>;
   clearLastSeen(): void;
+  locationOn?(): boolean; // missing in builds made before it
   addListener(event: "onStopPressed" | "onSoundDevicesChanged" | "onLastSeen", listener: () => void): Subscription;
   addListener(event: "onLater", listener: (e: { id: number }) => void): Subscription;
   addListener(event: "onGameChanged", listener: (e: { playing: boolean }) => void): Subscription;
@@ -93,6 +94,8 @@ export const clearLog = () => native?.clearLog();
 export const setLastSeen = (enabled: boolean, address?: string) => native?.setLastSeen(enabled, address ?? null);
 export const getLastSeen = async (): Promise<LastSeenPlace | null> => (native ? native.getLastSeen() : null);
 export const clearLastSeen = () => native?.clearLastSeen();
+/** Whether the phone's Location switch is on (Last seen can't note a place while it's off); true where unknown. */
+export const locationOn = () => native?.locationOn?.() ?? true;
 /** A new place was saved (or its street name found). */
 export const onLastSeen = (listener: () => void): Subscription => native?.addListener("onLastSeen", listener) ?? { remove() {} };
 

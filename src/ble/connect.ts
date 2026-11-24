@@ -5,7 +5,7 @@ import type { Transport } from "@/jieli/client";
 import { sampleTransport } from "@/jieli/sample";
 import { loadPref, savePref } from "@/utils/prefs";
 
-import { later } from "@/utils/later";
+import { later, sleep } from "@/utils/later";
 
 import { logLine, onSoundDevicesChanged, soundDevices } from "../../modules/shono-keeper";
 
@@ -21,6 +21,9 @@ const WRITE = "0000ae01-0000-1000-8000-00805f9b34fb";
 const NOTIFY = "0000ae02-0000-1000-8000-00805f9b34fb";
 const SCAN_S = 8;
 const CONNECT_TIMEOUT_MS = 8000;
+const FAST_FAIL_MS = 2000; // a link that fails sooner was refused (Android's GATT error 133, common while the sound connects)
+const RETRY_MS = 600; // and a second try a moment later usually works
+const SETUP_MS = 8000; // a fresh link runs at full speed this long: the handshake, the reads, a put-back at power-up
 const MTU = 247; // what the earbuds agreed to on Windows
 
 let started: Promise<void> | undefined;
@@ -30,7 +33,6 @@ const LAST_KEY = "budpilot.lastEarbuds";
 let known: string | undefined;
 const lastEarbuds = () => (known ??= loadPref<string>(LAST_KEY));
 
-export const hasKnownEarbuds = () => !!lastEarbuds();
 /** The earbuds' Bluetooth address (the same for sound and for Shono's link), once Shono has found them. */
 export const knownEarbudsAddress = () => lastEarbuds();
 
@@ -154,7 +156,7 @@ export async function connectEarbuds({ reuse = false } = {}): Promise<Transport>
     throw new Error(needsLocation() ? "Shono needs location access to look for your earbuds." : "Shono needs Nearby devices access to reach your earbuds.");
   if ((await BleManager.checkState()) !== "on") throw new Error("Bluetooth is off. Turn it on to reach your earbuds.");
   // give up on an attempt after a while, like on Windows: a pending connect can sit on earbuds that went away
-  const link = async (to: string) => {
+  const attempt = async (to: string) => {
     let cancel = () => {};
     await Promise.race([
       BleManager.connect(to),
@@ -166,6 +168,14 @@ export async function connectEarbuds({ reuse = false } = {}): Promise<Transport>
       }),
     ]).finally(() => cancel());
   };
+  const link = async (to: string) => {
+    const started = Date.now();
+    await attempt(to).catch(async (e) => {
+      if (Date.now() - started > FAST_FAIL_MS) throw e; // timed out: the earbuds aren't reachable right now
+      await sleep(RETRY_MS);
+      await attempt(to);
+    });
+  };
   const playing = await earbudsPlayingHere();
   const last = playing !== "unknown" && playing ? playing : lastEarbuds();
   let id: string;
@@ -175,17 +185,34 @@ export async function connectEarbuds({ reuse = false } = {}): Promise<Transport>
   } else {
     // the earbuds playing on this phone, or the ones from last time, first (no scan needed); then a scan for any
     const direct = last ? await link(last).then(() => true, () => false) : false;
+    // in the background Android shows a scan nothing while the screen is off: fail now, so the next direct try comes
+    // sooner (it used to scan 8 s in vain after every miss)
+    if (!direct && last && AppState.currentState !== "active") throw new Error("The earbuds didn't answer.");
     id = direct ? last! : await find(BleManager);
     if (!direct) await link(id);
     known = id;
     savePref(LAST_KEY, id);
   }
+  // full speed while the link opens; the app's pace (below) once it's set up. In the background the low-power pace
+  // used to start at once, so the handshake, the reads and the put-back after power-up took several seconds
+  void BleManager.requestConnectionPriority(id, 1).catch(() => {});
   const mtu = await BleManager.requestMTU(id, MTU).catch(() => 23);
   await BleManager.retrieveServices(id, [SERVICE]);
 
+  // the link's pace once it's set up: low power in the background (the radios of both phone and earbuds wake ~3-6x
+  // less; a put-back takes ~0.3-0.5 s there), balanced on screen (the user's choice)
+  let settled = false;
+  const pace = (state: string) => {
+    if (settled) void BleManager.requestConnectionPriority(id, state === "active" ? 0 : 2).catch(() => {});
+  };
+  const settle = later(() => {
+    settled = true;
+    pace(String(AppState.currentState));
+  }, SETUP_MS);
   let onData: (b: Uint8Array) => void = () => {};
   let onDrop: () => void = () => {};
   const subs = [
+    AppState.addEventListener("change", pace),
     BleManager.onDidUpdateValueForCharacteristic((e) => {
       const c = e.characteristic.toLowerCase();
       if (e.peripheral !== id || (c !== NOTIFY && c !== "ae02")) return;
@@ -197,7 +224,7 @@ export async function connectEarbuds({ reuse = false } = {}): Promise<Transport>
     BleManager.onDisconnectPeripheral((e) => {
       if (e.peripheral !== id) return;
       subs.forEach((s) => s.remove()); // each link's listeners fire only for its own drop
-      power.remove();
+      settle();
       onDrop();
     }),
   ];
@@ -205,14 +232,10 @@ export async function connectEarbuds({ reuse = false } = {}): Promise<Transport>
     await BleManager.startNotification(id, SERVICE, NOTIFY);
   } catch (e) {
     subs.forEach((s) => s.remove());
+    settle();
     await BleManager.disconnect(id).catch(() => {});
     throw e;
   }
-  // the link's pace: low power in the background (the radios of both phone and earbuds wake ~3-6x less; a put-back
-  // takes ~0.3-0.5 s there), balanced on screen (the user's choice)
-  const pace = (state: string) => void BleManager.requestConnectionPriority(id, state === "active" ? 0 : 2).catch(() => {});
-  const power = AppState.addEventListener("change", pace);
-  if (AppState.currentState !== "active") pace("background");
   // one write at a time, each frame in one packet (the library splits at 20 bytes unless told the MTU)
   let writing: Promise<unknown> = Promise.resolve();
   return {
@@ -226,7 +249,7 @@ export async function connectEarbuds({ reuse = false } = {}): Promise<Transport>
     onDisconnect: (cb) => (onDrop = cb),
     close: async () => {
       subs.forEach((s) => s.remove());
-      power.remove();
+      settle();
       await BleManager.disconnect(id).catch(() => {});
       onDrop(); // ignored by Shono when it closed the link on purpose (link.current is cleared first)
     },

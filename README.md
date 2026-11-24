@@ -8,7 +8,7 @@ Control your Bluetooth earbuds from your phone and your PC: noise control, EQ an
 
 ## Status
 
-Version 0.5.1, Windows first.
+Version 1.0.0 for Android phones and tablets ([download](https://github.com/wahidalways/Shono/releases/latest)). Windows: 0.5.1.
 
 - [x] Bluetooth handshake with JieLi-based earbuds, tested on a real HOCO EQ35 ANC
 - [x] Battery for each earbud and the case
@@ -19,7 +19,7 @@ Version 0.5.1, Windows first.
 - [x] Wear detection
 - [x] Game mode: lowest delay, turns on by itself for full-screen games, optional Footsteps EQ, and a latency check
 - [x] Windows app: connects by itself, lives in the tray, can start with Windows
-- [ ] Android app
+- [x] Android app for phones and tablets: keeps your noise setting in the background, Find my earbuds
 
 ### Keeping your noise setting
 
@@ -35,7 +35,7 @@ Game mode switches the earbuds to their low-latency mode. In the Windows app it 
 
 | Earbuds | Status |
 | --- | --- |
-| HOCO EQ35 ANC | Works on Windows |
+| HOCO EQ35 ANC | Works on Android and Windows |
 
 Many budget earbuds use JieLi chips and the same control protocol, so more models can follow. To ask for yours, open an issue with the model name and a screenshot of its Bluetooth services in nRF Connect.
 
@@ -59,7 +59,7 @@ The Windows app is the Expo web build inside an Electron window ([desktop/](desk
 
 - Try changes live: `npm run dev`. It starts the Expo dev server, then opens Shono in live mode; edits in `src/` show up in the window. Ctrl+C, or Quit in the tray, stops both. Don't run the exe at the same time.
 - Build the app: `npm run desktop:build` writes `desktop/release/Shono-Setup-<version>.exe`, a per-user installer (no admin rights) that starts Shono when it's done. The version comes from the root `package.json`.
-- Earbud photos on the device card come from `public/device-photos/` (see its README.txt). They're the maker's artwork, so the folder is git-ignored: builds from this repo alone show the card without photos.
+- Earbud photos on the device card come from `public/device-photos/` (see its README.txt).
 - Windows-only watching (full-screen games, whether Windows has the earbuds, volume keys, the play/pause fix) runs in one small helper, [desktop/helper/helper.cs](desktop/helper/helper.cs). The build compiles it with the C# compiler that comes with Windows' .NET Framework, so nothing extra is needed.
 
 The installer isn't code-signed, so Windows SmartScreen may warn when you run it: choose **More info**, then **Run anyway**.
@@ -70,7 +70,9 @@ Shono connects by itself whenever the earbuds are around. If it ever loses them,
 
 ### Android app
 
-Not started yet. Bluetooth will need a development build; it does not work in Expo Go.
+The same code as the Windows app, with phone and tablet screens in [src/mobile/](src/mobile/) and Bluetooth through react-native-ble-manager. Expo Go shows sample earbuds; real Bluetooth needs an APK.
+
+APKs are built on GitHub ([.github/workflows/build-apk.yml](.github/workflows/build-apk.yml)) on every push to the `android` branch: `Shono-dev-*.apk` loads the code live from `npx expo start`, and the release APK is signed with Shono's release key, which stays off GitHub (the build leaves `Shono-tosign-*.apk` to sign on the PC). They use different keys, so uninstall one before installing the other.
 
 `tools/probe/` is a Python test bench for trying commands from a Windows PC: `pip install bleak`, then `python tools/probe/probe.py`. Disconnect any other app that is connected to the earbuds over Bluetooth LE first.
 

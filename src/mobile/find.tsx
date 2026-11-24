@@ -3,7 +3,7 @@
 // disconnected, read once at that moment by the native side (modules/shono-keeper/LastSeen.kt) and kept on this phone.
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { Image, Linking, PermissionsAndroid, Platform, StyleSheet, Text, View } from "react-native";
+import { AppState, Image, Linking, PermissionsAndroid, Platform, StyleSheet, Text, View } from "react-native";
 import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withTiming } from "react-native-reanimated";
 
 import { knownEarbudsAddress } from "@/ble/connect";
@@ -11,7 +11,7 @@ import type { BudPilot } from "@/screens/home/use-bud-pilot";
 import { F, useColors } from "@/theme";
 import { loadPref, savePref } from "@/utils/prefs";
 
-import { getLastSeen, type LastSeenPlace, onLastSeen, setLastSeen } from "../../modules/shono-keeper";
+import { getLastSeen, type LastSeenPlace, locationOn, onLastSeen, setLastSeen } from "../../modules/shono-keeper";
 import { PHOTOS } from "./art";
 import { useGlass, useSurface } from "./glass";
 import { Button, Card, CardHead, Press, T, tick, ToggleRow, Txt } from "./kit";
@@ -50,21 +50,50 @@ export function FindPage({ b, wide }: { b: BudPilot; wide?: boolean }) {
 /** Home's way in on a phone. */
 export function FindCard({ onOpen }: { onOpen: () => void }) {
   const c = useColors();
+  const on = useLastSeenOn();
+  const seen = useLastSeenPlace();
+  const spot = on && seen ? seen : undefined; // a place saved, and Last seen still on
+  const value = spot ? when(spot.at) : "Play a sound";
+  const line = spot ? (spot.place ? `Last seen near ${spot.place}` : "Last seen here, on the map") : on ? "Saved when they next disconnect" : "Ring them, or check Last seen";
   return (
-    <Press accessibilityRole="button" accessibilityLabel="Find my earbuds" onPress={onOpen} scale={0.98}>
-      <Card style={s.cardRow}>
-        <View style={[s.glyph, { backgroundColor: c.well }]}>
-          <Ionicons name="location-outline" size={20} color={c.ink} />
+    <Press accessibilityRole="button" accessibilityLabel={`Find my earbuds. ${value}. ${line}. Open`} onPress={onOpen} scale={0.98}>
+      {/* faint radar rings in the corner, still (nothing loops) */}
+      <Card style={s.findCard}>
+        <View pointerEvents="none" style={s.radar}>
+          {RINGS.map(([d, a]) => (
+            <View key={d} style={[s.radarRing, { width: d, height: d, borderRadius: d / 2, borderColor: spot ? c.signal : c.ink2, opacity: a }]} />
+          ))}
         </View>
-        <View style={s.grow}>
-          <Txt v="name">Find my earbuds</Txt>
-          <Txt v="sub">Play a sound, or see where they were last</Txt>
+        {/* one row: the pin, what's known, the way in (the icons had a row of their own, which made it tall) */}
+        <View style={s.findRow}>
+          <View style={[s.findWell, { backgroundColor: c.signalFill }]}>
+            <Ionicons name="location" size={20} color={c.onSignal} />
+          </View>
+          <View style={s.grow}>
+            <Txt v="small" muted>
+              Find my earbuds
+            </Txt>
+            <Text numberOfLines={1} style={[s.findValue, { color: c.ink }]}>
+              {value}
+            </Text>
+            <Txt v="sub" numberOfLines={1}>
+              {line}
+            </Txt>
+          </View>
+          <View style={[s.go, { backgroundColor: c.well }]}>
+            <Ionicons name="chevron-forward" size={16} color={c.ink} />
+          </View>
         </View>
-        <Ionicons name="chevron-forward" size={18} color={c.ink2} />
       </Card>
     </Press>
   );
 }
+
+const RINGS: [number, number][] = [
+  [168, 0.1],
+  [116, 0.16],
+  [66, 0.26],
+]; // the radar's rings: diameter and how faint
 
 // ───────── Play a sound ─────────
 
@@ -156,16 +185,19 @@ function EarTile({ label, photo, playing, onPress }: { label: string; photo: num
   );
 }
 
-function Ring({ on, delay, color }: { on: boolean; delay: number; color: string }) {
+/** A ring that spreads out and fades, again and again while `on` (with motion allowed): the sound playing here, and
+ * Home's radar while Shono looks for the earbuds. `size` its diameter at rest, `reach` how much further it spreads, `ms`
+ * one spread. */
+export function Ring({ on, delay, color, size = 76, reach = 1.1, ms = 1600 }: { on: boolean; delay: number; color: string; size?: number; reach?: number; ms?: number }) {
   const { motion } = useGlass();
   const p = useSharedValue(0);
   useEffect(() => {
     cancelAnimation(p);
     p.set(0);
-    if (on && motion) p.set(withDelay(delay, withRepeat(withTiming(1, { duration: 1600, easing: Easing.out(Easing.cubic) }), -1)));
-  }, [on, motion, delay, p]);
-  const a = useAnimatedStyle(() => ({ opacity: on ? (1 - p.get()) * 0.7 : 0, transform: [{ scale: 0.5 + p.get() * 1.1 }] }));
-  return <Animated.View pointerEvents="none" style={[s.ring, { borderColor: color }, a]} />;
+    if (on && motion) p.set(withDelay(delay, withRepeat(withTiming(1, { duration: ms, easing: Easing.out(Easing.cubic) }), -1)));
+  }, [on, motion, delay, ms, p]);
+  const a = useAnimatedStyle(() => ({ opacity: on ? (1 - p.get()) * 0.7 : 0, transform: [{ scale: 0.5 + p.get() * reach }] }));
+  return <Animated.View pointerEvents="none" style={[s.ring, { borderColor: color, width: size, height: size, borderRadius: size / 2 }, a]} />;
 }
 
 // ───────── Last seen ─────────
@@ -205,15 +237,30 @@ function LastSeenCard({ b }: { b: BudPilot }) {
   const seen = useLastSeenPlace();
   const [asking, setAsking] = useState(false); // the sheet before Android's question
   const [denied, setDenied] = useState(false);
+  const [locOn, setLocOn] = useState(locationOn); // the phone's Location switch: no place can be saved while it's off
+  const [askOn, setAskOn] = useState(false); // the sheet asking to switch Location on
   // tell the native side which earbuds to watch: their address, known once Shono has found them
   const connected = b.status === "connected";
   useEffect(() => setLastSeen(on, knownEarbudsAddress()), [on, connected]);
+  // look again on coming back to Shono (from Android's Location settings, or the quick settings)
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (st) => st === "active" && setLocOn(locationOn()));
+    return () => sub.remove();
+  }, []);
 
   const allow = async () => {
     setAsking(false);
     const ok = await askLocation();
     setDenied(!ok);
-    if (ok) setLastSeenOn(true);
+    if (!ok) return;
+    setLastSeenOn(true);
+    const now = locationOn();
+    setLocOn(now);
+    setAskOn(!now);
+  };
+  const openLocation = () => {
+    setAskOn(false);
+    void Linking.sendIntent("android.settings.LOCATION_SOURCE_SETTINGS").catch(() => undefined);
   };
 
   return (
@@ -226,6 +273,17 @@ function LastSeenCard({ b }: { b: BudPilot }) {
         value={on}
         onChange={(v) => (v ? setAsking(true) : setLastSeenOn(false))}
       />
+      {on && !locOn ? (
+        <>
+          <View style={s.warn}>
+            <Ionicons name="alert-circle-outline" size={15} color={c.danger} style={{ marginTop: 1 }} />
+            <Txt v="sub" style={s.grow}>
+              {"Location is off on this phone, so Shono can't save where your earbuds disconnect."}
+            </Txt>
+          </View>
+          <Button label="Turn on Location" kind="pri" onPress={openLocation} />
+        </>
+      ) : null}
       {on && seen ? (
         <View style={[s.seen, { borderTopColor: c.hair }]}>
           <Ionicons name="location" size={22} color={c.signal} />
@@ -243,7 +301,7 @@ function LastSeenCard({ b }: { b: BudPilot }) {
           kind="out"
           onPress={() => void Linking.openURL(`geo:${seen.lat},${seen.lng}?q=${seen.lat},${seen.lng}(Your earbuds)`).catch(() => undefined)}
         />
-      ) : (
+      ) : on && !locOn ? null : (
         <Txt v="sub">
           {on
             ? "Shono saves the spot the next time your earbuds disconnect from this phone."
@@ -258,16 +316,28 @@ function LastSeenCard({ b }: { b: BudPilot }) {
           <Button label="Not now" kind="out" onPress={() => setAsking(false)} />
         </View>
       </Sheet>
+      <Sheet open={askOn} tablet={false} title="Turn on Location?" sub="Location is off on this phone, so Shono can't save where your earbuds disconnect. Turn it on in Android's Location settings." onClose={() => setAskOn(false)}>
+        <View style={s.sheetBtns}>
+          <Button label="Turn on Location" kind="pri" onPress={openLocation} />
+          <Button label="Not now" kind="out" onPress={() => setAskOn(false)} />
+        </View>
+      </Sheet>
     </Card>
   );
 }
 
 const s = StyleSheet.create({
+  findCard: { overflow: "hidden" },
+  findRow: { flexDirection: "row", alignItems: "center", gap: 14 },
+  // centred on the › at the card's right: the rings read as a radar around the way in
+  radar: { position: "absolute", top: "50%", marginTop: -84, right: -52, width: 168, height: 168, alignItems: "center", justifyContent: "center" },
+  radarRing: { position: "absolute", borderWidth: 1.5 },
+  findValue: { fontFamily: F.display, fontSize: 18, lineHeight: 23 },
+  findWell: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+  go: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   grow: { flex: 1, minWidth: 0 },
   stack: { gap: 12 },
   two: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
-  cardRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  glyph: { width: 40, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   warn: { flexDirection: "row", gap: 6, alignItems: "flex-start", marginTop: -4 },
   tiles: { flexDirection: "row", gap: 10 },
   tile: { flex: 1, borderRadius: 20, borderWidth: 1, alignItems: "center", gap: 4, paddingTop: 14, paddingBottom: 12 },

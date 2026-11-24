@@ -161,13 +161,23 @@ function savedLook(): Look {
 
 type Theme = { c: Colors; look: Look; setLook: (p: Partial<Look>) => void };
 const ThemeContext = createContext<Theme | null>(null);
+// the colours on their own: most of the screen reads only them, so a look change that keeps the colours (full screen,
+// glass, battery bars) doesn't re-render every line of text
+const ColorsContext = createContext<Colors | null>(null);
+// and the phone's glass choice on its own (every card reads it)
+const GlassContext = createContext<boolean | undefined>(undefined);
 
-/** Theme and accent for the whole app; remembered on this computer. `onTheme` tells the Windows shell, so its window matches. */
-export function ThemeProvider({ onTheme, children }: { onTheme?: (t: ThemeChoice) => void; children: ReactNode }) {
+/** Theme and accent for the whole app; remembered on this computer. `onTheme` tells the Windows shell, so its window matches.
+ * `scoped` (the phone): the colours aren't handed to everything below; each part of the screen takes them with
+ * KeepColors, so a page out of sight isn't re-rendered by a new theme (React re-runs every reader of a context below a
+ * changed provider, even past a nested provider of it). */
+export function ThemeProvider({ onTheme, scoped, children }: { onTheme?: (t: ThemeChoice) => void; scoped?: boolean; children: ReactNode }) {
   const system = useColorScheme();
   const [look, setLookState] = useState<Look>(savedLook);
   const dark = look.theme === "system" ? system === "dark" : look.theme === "dark";
   const c = useMemo(() => makeColors(dark, look.accent), [dark, look.accent]);
+  // not a transition: one made the change land later, and restart whenever something else updated meanwhile (the
+  // user: "responsive but changes are delayed"); the switches and segments answer the tap on their own already
   const setLook = useCallback(
     (p: Partial<Look>) =>
       setLookState((old) => {
@@ -179,7 +189,18 @@ export function ThemeProvider({ onTheme, children }: { onTheme?: (t: ThemeChoice
   );
   useEffect(() => onTheme?.(look.theme), [look.theme, onTheme]); // also on start, so the window matches a saved choice
   const value = useMemo(() => ({ c, look, setLook }), [c, look, setLook]);
-  return createElement(ThemeContext.Provider, { value }, children);
+  const glass = createElement(GlassContext.Provider, { value: look.glass }, children);
+  return createElement(ThemeContext.Provider, { value }, scoped ? glass : createElement(ColorsContext.Provider, { value: c }, glass));
+}
+
+/** The colours for one part of a `scoped` screen. Out of sight (`live` false) it keeps the ones it last showed and
+ * takes new ones when it's shown again: a new theme or accent re-renders only what's on screen (the phone's other
+ * pages stay mounted, out of sight). */
+export function KeepColors({ live = true, children }: { live?: boolean; children: ReactNode }) {
+  const { c } = useTheme();
+  const [kept, setKept] = useState(c);
+  if (live && kept !== c) setKept(c); // its only setter, and the value reads the live colours anyway (see Sheet)
+  return createElement(ColorsContext.Provider, { value: live ? c : kept }, children);
 }
 
 export const useTheme = (): Theme => {
@@ -187,4 +208,10 @@ export const useTheme = (): Theme => {
   if (!t) throw new Error("useTheme needs ThemeProvider");
   return t;
 };
-export const useColors = (): Colors => useTheme().c;
+export const useColors = (): Colors => {
+  const c = useContext(ColorsContext);
+  if (!c) throw new Error("useColors needs ThemeProvider");
+  return c;
+};
+/** The phone's "Glass and motion" choice; undefined until the person picks one. */
+export const useGlassChoice = () => useContext(GlassContext);

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Shono",
     "slug": "BudPilot",
-    "version": "0.6.0",
+    "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "budpilot",
@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "com.wahidalways.budpilot",
-      "versionCode": 8,
+      "versionCode": 9,
       "adaptiveIcon": {
         "backgroundColor": "#2C5DC9",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -29,9 +29,13 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#F3F4F7",
+          "backgroundColor": "#EEF0F4",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 76,
+          "dark": {
+            "backgroundColor": "#08090B",
+            "image": "./assets/images/splash-icon.png"
+          }
         }
       ],
       [

@@ -3,13 +3,16 @@
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { MobileApp } from "./shell";
+import { KeepTopClear } from "./top-clear";
 
 (globalThis as { __shonoSample?: boolean }).__shonoSample = true;
 
 export default function PhonePreview() {
   return (
     <SafeAreaProvider>
-      <MobileApp />
+      <KeepTopClear>
+        <MobileApp />
+      </KeepTopClear>
     </SafeAreaProvider>
   );
 }

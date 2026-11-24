@@ -96,7 +96,7 @@ export function SoundPanel({ b }: { b: BudPilot }) {
 export function EqualizerPanel({ b }: { b: BudPilot }) {
   const c = useColors();
   const my = b.myEqs;
-  const { gains, setDraft, commit, naming, setNaming, confirmName, startNew, kind, playing, faded, isFlat, resetToFlat } = useEqEditor(b);
+  const { gains, commit, naming, setNaming, confirmName, startNew, kind, playing, faded, isFlat, resetToFlat } = useEqEditor(b);
 
   // the built-in Game EQ borrows the Custom slot: show it as itself, and keep the user's Custom out of the way
   if (kind === "game")
@@ -105,7 +105,7 @@ export function EqualizerPanel({ b }: { b: BudPilot }) {
         <PanelHead title="Equalizer" />
         <EqPills b={b} />
         <Card>
-          <EqCurve bands={P.eqBands} gains={GAME_EQ} max={P.eqMax} faded={false} readOnly onChange={() => {}} onCommit={() => {}} />
+          <EqCurve bands={P.eqBands} gains={GAME_EQ} max={P.eqMax} faded={false} readOnly onCommit={() => {}} />
           <View style={s.row}>
             <Txt v="sub" style={s.grow}>
               {GAME_EQ_NAME} plays while Game mode is on. Your EQ comes back after.
@@ -140,7 +140,7 @@ export function EqualizerPanel({ b }: { b: BudPilot }) {
       <PanelHead title="Equalizer" lead="Make your own EQs with + New and pick them like presets, here and in the tray." />
       <EqPills b={b} onNew={startNew} />
       <Card>
-        <EqCurve bands={P.eqBands} gains={gains} max={P.eqMax} faded={faded} onChange={setDraft} onCommit={commit} />
+        <EqCurve bands={P.eqBands} gains={gains} max={P.eqMax} faded={faded} onCommit={commit} />
         {naming ? (
           <View style={s.row}>
             <TextBox

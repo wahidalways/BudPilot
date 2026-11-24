@@ -1,6 +1,7 @@
 // The latency check on a phone (Windows' is screens/home/latency-check.tsx, on Web Audio): six beeps at random
 // moments, a tap at each; the median tap time with Game mode off and then on shows what Game mode saves. The phone's
 // own audio delay and your reaction time are in both runs, so their difference is the earbuds'.
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { setAudioModeAsync, useAudioPlayer } from "expo-audio";
 import { useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
@@ -51,7 +52,6 @@ export function LatencyCheck({ gameOn }: { gameOn: boolean }) {
     setResults((r) => ({ ...r, [mode]: latencyMs(samples) ?? null }));
   };
 
-  const show = (v?: number | null) => (v === undefined ? "not checked" : v === null ? "not enough taps" : `${Math.round(v)} ms`);
   const { normal, game } = results;
   const diff = typeof normal === "number" && typeof game === "number" ? normal - game : undefined;
 
@@ -74,17 +74,14 @@ export function LatencyCheck({ gameOn }: { gameOn: boolean }) {
         scale={0.97}
         style={[s.button, { backgroundColor: beep ? c.signalFill : c.well }]}
       >
+        <Ionicons name={beep ? "ear" : "pulse"} size={20} color={beep ? c.onSignal : c.signalInk} />
         <Text style={[T.strong, { fontFamily: F.semibold, color: beep ? c.onSignal : c.ink }]}>
           {beep ? `Tap when you hear it (${beep}/${BEEPS})` : `Start check (Game mode ${gameOn ? "on" : "off"})`}
         </Text>
       </Press>
       <View style={s.results}>
-        <Txt v="small" muted>
-          Normal <Text style={[s.num, { color: c.ink }]}>{show(normal)}</Text>
-        </Txt>
-        <Txt v="small" muted>
-          Game mode <Text style={[s.num, { color: c.ink }]}>{show(game)}</Text>
-        </Txt>
+        <Stat label="Normal" v={normal} next={!gameOn} />
+        <Stat label="Game mode" v={game} next={gameOn} />
       </View>
       {diff !== undefined && (
         <Txt v="strong" style={{ color: diff > 0 ? c.ok : c.ink }}>
@@ -95,9 +92,33 @@ export function LatencyCheck({ gameOn }: { gameOn: boolean }) {
   );
 }
 
+/** One run's result, big: the median tap time, or a dash until it's checked. `next`: the one a check now fills (it
+ * follows Game mode), edged in the accent. */
+function Stat({ label, v, next }: { label: string; v?: number | null; next: boolean }) {
+  const c = useColors();
+  return (
+    <View style={[s.stat, { backgroundColor: c.well, borderColor: next ? c.tintEdge : "transparent" }]}>
+      <Txt v="small" muted>
+        {label}
+      </Txt>
+      {typeof v === "number" ? (
+        <Text style={[s.num, { color: c.ink }]}>
+          {Math.round(v)}
+          <Text style={[s.unit, { color: c.ink2 }]}> ms</Text>
+        </Text>
+      ) : (
+        <Text style={[s.num, { color: c.ink2 }, v === null && s.few]}>{v === null ? "Too few taps" : "—"}</Text>
+      )}
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
-  wrap: { gap: 10 },
-  button: { height: 64, borderRadius: 18, alignItems: "center", justifyContent: "center" },
-  results: { flexDirection: "row", gap: 24 },
-  num: { fontFamily: F.semibold, fontVariant: ["tabular-nums"] },
+  wrap: { gap: 12 },
+  button: { height: 64, borderRadius: 18, flexDirection: "row", gap: 10, alignItems: "center", justifyContent: "center" },
+  results: { flexDirection: "row", gap: 10 },
+  stat: { flex: 1, borderRadius: 16, borderWidth: 1, paddingVertical: 10, paddingHorizontal: 14, gap: 2 },
+  num: { fontFamily: F.display, fontSize: 24, lineHeight: 30, fontVariant: ["tabular-nums"] },
+  unit: { fontFamily: F.medium, fontSize: 13 },
+  few: { fontFamily: F.semibold, fontSize: 14 },
 });

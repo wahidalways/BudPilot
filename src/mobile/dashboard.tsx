@@ -12,14 +12,13 @@ import { fnName, gesture } from "@/screens/home/touch-controls";
 import type { BudPilot } from "@/screens/home/use-bud-pilot";
 import { F, useColors } from "@/theme";
 
-import { Dots } from "./art";
 import { FindPage } from "./find";
 import { Glass } from "./glass";
 import { DeviceCard, NoiseCard, type TourRefs, Welcome } from "./home";
 import { FnGlyph } from "./icons";
-import { Card, CardHead, Press, Seg, Switch, tick, Txt } from "./kit";
+import { Card, CardHead, GearButton, Mark, Press, Seg, Switch, tick, Txt } from "./kit";
 import { LatencyCheck } from "./latency";
-import { Mark } from "./onboarding";
+
 import { AutoGamesRow, EARS, EqPage, GameEqPicker, notConnectedText, TouchFacts, Turbo, useKeyPicker, WearRow } from "./pages";
 
 type ViewNode = ComponentRef<typeof View>;
@@ -122,7 +121,6 @@ function TouchCard({ b, tablet, fill }: { b: BudPilot; tablet: boolean; fill?: b
               style={[s.keyRow, { backgroundColor: c.well }]}
             >
               <View style={s.gesture}>
-                <Dots n={taps} color={c.ink} />
                 <Txt v="sub">{gesture(taps)}</Txt>
               </View>
               {fn !== undefined && <FnGlyph fn={fn} color={c.signalInk} size={18} />}
@@ -213,20 +211,18 @@ export function DashboardBoard({ b, sideways, width, refs, tablet }: { b: BudPil
 }
 
 /** The sideways top bar: Shono, the welcome, and the gear (App settings). */
-export function TabletBar({ b, onGear, gearRef }: { b: BudPilot; onGear: () => void; gearRef: RefObject<ViewNode | null> }) {
+export function TabletBar({ b, onGear, gearRef, attention }: { b: BudPilot; onGear: () => void; gearRef: RefObject<ViewNode | null>; attention: boolean }) {
   const c = useColors();
   const insets = useSafeAreaInsets();
   return (
-    <View style={[s.bar, { paddingTop: insets.top, height: insets.top + 76, paddingLeft: EDGE + insets.left, paddingRight: EDGE - 10 + insets.right }]}>
+    <View style={[s.bar, { paddingTop: insets.top, height: insets.top + 76, paddingLeft: EDGE + insets.left, paddingRight: EDGE + insets.right }]}>
       <Mark size={34} />
       <Text style={[s.brand, { color: c.ink }]}>Shono</Text>
       <View style={[s.divider, { backgroundColor: c.hair }]} />
       <View style={s.grow}>
         <Welcome b={b} compact />
       </View>
-      <Pressable ref={gearRef} accessibilityRole="button" accessibilityLabel="App settings" hitSlop={6} onPress={onGear} style={s.gear}>
-        <Ionicons name="settings-outline" size={24} color={c.ink} />
-      </Pressable>
+      <GearButton onPress={onGear} attention={attention} size={38} viewRef={gearRef} />
     </View>
   );
 }
@@ -250,7 +246,7 @@ export function SidePanel({ open, title, lede, onClose, target, children }: { op
   const w = Math.min(560, Math.round(width * 0.45));
   const scrim = useAnimatedStyle(() => ({ opacity: p.get() * 0.45 }));
   const slide = useAnimatedStyle(() => ({ transform: [{ translateX: (1 - p.get()) * (w + 30) }] }));
-  if (!shown) return null;
+  if (!open && !shown) return null; // `open` itself shows it (see Sheet: a set made while rendering can be dropped)
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents={open ? "auto" : "none"}>
       <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: "#06080E" }, scrim]}>
@@ -298,7 +294,6 @@ const s = StyleSheet.create({
   bar: { flexDirection: "row", alignItems: "center", gap: 12 },
   brand: { fontFamily: F.display, fontSize: 20, letterSpacing: -0.3 },
   divider: { width: StyleSheet.hairlineWidth, height: 32, marginHorizontal: 6 },
-  gear: { width: 48, height: 48, alignItems: "center", justifyContent: "center" },
   panel: { position: "absolute", top: 0, right: 0, bottom: 0, borderLeftWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
   panelHead: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 20, paddingBottom: 6 },
   close: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
