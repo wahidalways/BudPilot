@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Platform } from "react-native";
 
-import { connectEarbuds, hasKnownEarbuds, watchSoundHere } from "@/ble/connect";
+import { connectEarbuds, watchSoundHere } from "@/ble/connect";
 import { HOCO_EQ35 } from "@/devices/hoco-eq35";
 import { desktop } from "@/hooks/use-desktop";
 import type { Transport } from "@/jieli/client";
@@ -28,6 +28,7 @@ const REFRESH_MS = 3000;
 const BG_REFRESH_MS = 30_000;
 const VOLUME_MS = 500; // the volume alone, more often, while volume taps are on: a tap should show in Windows right away
 const RECONNECT_MS = 1000; // the earbuds switch ANC on ~3 s after power-up, so be connected before that
+const RETRY_MS = 1500; // a failed try while the earbuds play on this phone: the next one this soon, not at the next 5 s tick
 const NOISE_KEY = "budpilot.noise";
 const STUCK_MS = 30_000; // an attempt this old has hung (Bluetooth can stall); allow a new one
 const REUSE_MS = 20_000; // after a drop, reconnect straight to the same earbuds this long; then scan for them afresh
@@ -84,6 +85,8 @@ export function useEarbuds() {
   const session = useRef<(t: Transport, how?: string) => Promise<void>>(undefined);
   const wanted = useRef(false); // the user wants to stay connected (false after Disconnect)
   const connecting = useRef(false); // one connection attempt at a time
+  const relinking = useRef(false); // the loop after a drop is trying the same earbuds
+  const retry = useRef<() => void>(undefined); // cancels a quick retry that's waiting
   // after Disconnect, Shono stops connecting by itself until Connect or its next start: never saved, so it can't
   // get stuck off (the user wants it connected whenever the earbuds are)
   const paused = useRef(false);
@@ -224,18 +227,23 @@ export function useEarbuds() {
         void (async () => {
           // the earbuds went in the case or out of range: straight back to the same ones first (quick after a trip to
           // the case); after REUSE_MS __budpilotAutoConnect scans afresh, in case they're back under another address
-          while (wanted.current && !buds.current && soundHere.current !== false && Date.now() - droppedAt.current < REUSE_MS) {
-            await sleep(RECONNECT_MS);
-            if (!wanted.current || buds.current || connecting.current) continue;
-            connecting.current = true;
-            connectingSince.current = Date.now(); // or the stuck-attempt check takes it for hung and starts a second
-            try {
-              await session.current!(await connectEarbuds({ reuse: true }), "the same earbuds");
-            } catch (err) {
-              noteFail(err);
-            } finally {
-              connecting.current = false;
+          relinking.current = true;
+          try {
+            while (wanted.current && !buds.current && soundHere.current !== false && Date.now() - droppedAt.current < REUSE_MS) {
+              await sleep(RECONNECT_MS);
+              if (!wanted.current || buds.current || connecting.current) continue;
+              connecting.current = true;
+              connectingSince.current = Date.now(); // or the stuck-attempt check takes it for hung and starts a second
+              try {
+                await session.current!(await connectEarbuds({ reuse: true }), "the same earbuds");
+              } catch (err) {
+                noteFail(err);
+              } finally {
+                connecting.current = false;
+              }
             }
+          } finally {
+            relinking.current = false;
           }
         })();
       });
@@ -328,6 +336,13 @@ export function useEarbuds() {
         noteFail(e);
         if (auto) {
           if (wanted.current) setStatus("reconnecting"); // a Disconnect meanwhile stays a Disconnect
+          // the earbuds play on this phone, so they're on and near: try again soon (the earbuds' Bluetooth LE side
+          // can take a few seconds longer than their sound after leaving the case). Not on Windows: a scan there
+          // needs the user gesture the shell's own tick carries
+          if (Platform.OS === "android" && wanted.current && soundHere.current === true) {
+            retry.current?.();
+            retry.current = later(() => (globalThis as { __budpilotAutoConnect?: () => void }).__budpilotAutoConnect?.(), RETRY_MS);
+          }
         } else {
           wanted.current = false;
           setError(message(e));
@@ -348,7 +363,9 @@ export function useEarbuds() {
       if (paused.current || buds.current || connecting.current || soundHere.current === false) return;
       // in the background on Android, only when the earbuds play on this phone: no endless scans while that's unknown
       if (Platform.OS === "android" && AppState.currentState !== "active" && soundHere.current !== true) return;
-      if (!wanted.current || !hasKnownEarbuds() || Date.now() - droppedAt.current >= REUSE_MS) void connect({ auto: true });
+      // right after a drop the loop above tries the same earbuds; once it has stopped (their sound left, then came
+      // back), a fresh attempt mustn't wait out the rest of REUSE_MS
+      if (!relinking.current) void connect({ auto: true });
     };
   }, [connect]);
 

@@ -21,13 +21,12 @@ export type Naming = { id?: string; name: string; problem?: string };
 export function useEqEditor(b: BudPilot) {
   const state = b.state!;
   const my = b.myEqs;
-  const [draft, setDraft] = useState<number[]>(); // what a drag shows while it lasts (sent when it ends)
   const [naming, setNaming] = useState<Naming>();
   const custom = P.customEqMode;
   const customOn = state.eqMode === custom;
   // a preset shows its own shape (the user: "it should show the preview"); dragging starts your own from it
   const shown = customOn ? state.eqGains : (presetShape(state.eqMode) ?? flat());
-  const gains = draft ?? shown;
+  const gains = shown; // a drag's curve lives in the chart until the finger lifts (eq-curve.tsx)
   const playing = my.playing;
 
   // a drag or an arrow key changes the saved EQ playing, if one is. It and the earbuds change in the same moment
@@ -35,7 +34,6 @@ export function useEqEditor(b: BudPilot) {
   // here reset the next drag halfway (user, 2026-11-23)
   const commit = (next: number[]) => {
     if (playing) my.update(playing.id, next);
-    setDraft(undefined);
     void b.setEq(custom, next);
   };
 
@@ -58,11 +56,10 @@ export function useEqEditor(b: BudPilot) {
   };
 
   /** What plays: the built-in Game EQ (it borrows the Custom slot), a preset, one of your saved EQs, or a Custom curve. */
-  const kind: "game" | "preset" | "mine" | "custom" = b.game.builtIn ? "game" : !customOn && !draft ? "preset" : playing ? "mine" : "custom";
+  const kind: "game" | "preset" | "mine" | "custom" = b.game.builtIn ? "game" : !customOn ? "preset" : playing ? "mine" : "custom";
 
   return {
     gains,
-    setDraft,
     commit,
     naming,
     setNaming,

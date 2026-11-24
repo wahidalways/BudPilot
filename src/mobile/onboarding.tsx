@@ -19,27 +19,16 @@ import { needsLocation, requestBluetoothAccess } from "@/ble/connect";
 import type { BudPilot } from "@/screens/home/use-bud-pilot";
 import { F, useColors, useTheme } from "@/theme";
 import { later } from "@/utils/later";
-import { BudsIcon } from "@/ui/icons";
 
 import Ionicons from "@expo/vector-icons/Ionicons";
 
 import { brandOf, PHOTOS } from "./art";
-import { Button, Press, Rise, SPRING, T, tick, Txt } from "./kit";
+import { Button, Lockup, Press, Rise, SPRING, T, tick, Txt } from "./kit";
 import { AccentPicker } from "./pages";
 import { type Anchor, measureAnchor, Popover } from "./sheet";
 
 type Step = "welcome" | "access" | "connect";
 const STEPS: Step[] = ["welcome", "access", "connect"];
-
-/** Shono's mark: two earbuds on the accent. */
-export function Mark({ size = 30 }: { size?: number }) {
-  const c = useColors();
-  return (
-    <View style={{ width: size, height: size, borderRadius: size * 0.3, backgroundColor: c.signalFill, alignItems: "center", justifyContent: "center" }}>
-      <BudsIcon color={c.onSignal} size={size * 0.58} strokeWidth={2.4} />
-    </View>
-  );
-}
 
 /** One step: slides in from the side it comes from, like the pages. */
 function StepView({ active, dir, children }: { active: boolean; dir: number; children: ReactNode }) {
@@ -156,8 +145,7 @@ export function Onboarding({ b, onDone }: { b: BudPilot; onDone: (tour: boolean)
       <View style={[s.top, { paddingTop: insets.top + 8 }]}>
         {step === "welcome" ? (
           <View style={s.wordmark}>
-            <Mark />
-            <Text style={[s.brand, { color: c.ink }]}>Shono</Text>
+            <Lockup />
           </View>
         ) : (
           <>
@@ -578,7 +566,6 @@ const s = StyleSheet.create({
   inline: { flexDirection: "row", alignItems: "center", gap: 6 },
   top: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, zIndex: 2 },
   wordmark: { flexDirection: "row", alignItems: "center", gap: 10, paddingLeft: 12, height: 44 },
-  brand: { fontFamily: F.display, fontSize: 19, letterSpacing: -0.3 },
   iconBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   progress: { flex: 1, flexDirection: "row", gap: 6, maxWidth: 520 },
   seg: { flex: 1, height: 4, borderRadius: 2, overflow: "hidden" },

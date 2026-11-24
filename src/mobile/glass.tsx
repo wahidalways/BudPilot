@@ -7,7 +7,9 @@ import { BlurView } from "expo-blur";
 import { type ComponentRef, createContext, type ReactNode, type RefObject, useEffect } from "react";
 import { Platform, type StyleProp, StyleSheet, useWindowDimensions, View, type ViewStyle } from "react-native";
 import Animated, { useAnimatedStyle, useReducedMotion, useSharedValue, withSpring } from "react-native-reanimated";
-import { useColors, useTheme } from "@/theme";
+import { type Colors, useColors, useGlassChoice } from "@/theme";
+
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { deviceClass } from "../../modules/shono-keeper";
 
@@ -21,17 +23,14 @@ const LOW_END = (() => {
 })();
 
 export function useGlass() {
-  const { look } = useTheme();
   const reduce = useReducedMotion();
-  const glass = look.glass ?? !LOW_END;
+  const glass = useGlassChoice() ?? !LOW_END; // only the glass choice: other look changes don't re-render every card
   return { glass, motion: glass && !reduce };
 }
 
 /** Behind everything on a phone or tablet: dark is a neutral near-black (the user's pick: no blue-tinted greys). */
-export function useGround() {
-  const c = useColors();
-  return c.dark ? "#08090B" : c.ground;
-}
+export const groundOf = (c: Colors) => (c.dark ? "#08090B" : c.ground);
+export const useGround = () => groundOf(useColors());
 
 /** A card's fill, edge and shadow: Frost (milky glass; the user's pick), or the plain raised surface with glass off.
  * No blur per card: only the soft colour pools sit behind the cards, and through milky glass they're the same wash. */
@@ -134,6 +133,9 @@ export function Backdrop({ shift }: { shift: number }) {
   const c = useColors();
   const { glass, motion } = useGlass();
   const { width, height } = useWindowDimensions();
+  // the top pool follows the top bar down by the status bar's height, so its light stays behind Shono's mark and title
+  // (the user missed it after the top was kept clear in full screen)
+  const top = useSafeAreaInsets().top;
   const x = useSharedValue(shift);
   useEffect(() => x.set(motion ? withSpring(shift, { dampingRatio: 1, duration: 1000 }) : shift), [shift, motion, x]);
   const a = useAnimatedStyle(() => ({ transform: [{ translateX: -x.get() * 22 }, { translateY: x.get() * 12 }] }));
@@ -144,7 +146,7 @@ export function Backdrop({ shift }: { shift: number }) {
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
       <Animated.View
-        style={[{ position: "absolute", left: -big * 0.42, top: -big * 0.46, width: big, height: big, backgroundImage: pool(c.wallA, c.dark ? 0.45 : 0.5) }, a]}
+        style={[{ position: "absolute", left: -big * 0.42, top: -big * 0.46 + top, width: big, height: big, backgroundImage: pool(c.wallA, c.dark ? 0.45 : 0.5) }, a]}
       />
       <Animated.View
         style={[

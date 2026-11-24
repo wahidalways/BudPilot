@@ -40,7 +40,7 @@ export default function App() {
   if (!loaded && !failed) return null; // bundled, so this is a moment; without it text would flash in a fallback font
   if (PhonePreview)
     return (
-      <ThemeProvider>
+      <ThemeProvider scoped>
         <Suspense fallback={null}>
           <PhonePreview />
         </Suspense>

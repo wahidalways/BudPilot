@@ -2,18 +2,20 @@
 // with Reanimated springs and only moves transform and opacity, so it stays smooth on mid-range phones.
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Haptics from "expo-haptics";
-import { type ComponentRef, type ReactNode, useEffect, useRef, useState } from "react";
+import { Children, type ComponentProps, type ComponentRef, isValidElement, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { Pressable, type PressableProps, ScrollView, type StyleProp, StyleSheet, Text, type TextProps, View, type ViewStyle } from "react-native";
-import Animated, { useAnimatedStyle, useReducedMotion, useSharedValue, withDelay, withSpring, withTiming } from "react-native-reanimated";
+import Animated, { interpolateColor, useAnimatedStyle, useReducedMotion, useSharedValue, withDelay, withSpring, withTiming } from "react-native-reanimated";
 
 import { F, useColors } from "@/theme";
+import { BudsIcon } from "@/ui/icons";
 
-import { useSurface } from "./glass";
+import { groundOf, useSurface } from "./glass";
 
 /** A quick spring with a small overshoot: lenses, gliders, switch knobs. */
 export const SPRING = { dampingRatio: 0.68, duration: 380 } as const;
 /** Snappier, for press feedback. */
 const PRESS = { dampingRatio: 0.55, duration: 190 } as const;
+const REVERT_MS = 3500; // a switch's tap not taken this long (past an earbuds command's 3 s wait) shows the truth again
 
 export const T = StyleSheet.create({
   big: { fontFamily: F.display, fontSize: 30, lineHeight: 36, letterSpacing: -0.6 },
@@ -103,12 +105,24 @@ export function Seg<V extends string | number>({
   const x = useSharedValue(0);
   const shown = useSharedValue(0);
   const reduce = useReducedMotion();
+  const aim = useRef(-1); // where the lens is heading: a tap sends it at once, before the app has re-rendered
+  const at = useRef(-1); // where the value is
+  const revert = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const glide = (to: number) => {
+    aim.current = to;
+    x.set(reduce ? to : withSpring(to, SPRING));
+  };
   useEffect(() => {
-    if (!segW || i < 0) return void shown.set(withTiming(0, { duration: 120 }));
+    at.current = segW && i >= 0 ? i * segW : -1;
+    if (at.current < 0) return void shown.set(withTiming(0, { duration: 120 }));
     const first = shown.get() === 0;
-    x.set(first || reduce ? i * segW : withSpring(i * segW, SPRING));
+    if (first) {
+      aim.current = at.current;
+      x.set(at.current);
+    } else if (aim.current !== at.current) glide(at.current);
     shown.set(withTiming(1, { duration: 120 }));
-  }, [i, segW, reduce, x, shown]);
+  }, [i, segW, reduce, x, shown]); // eslint-disable-line react-hooks/exhaustive-deps -- glide only uses these
+  useEffect(() => () => clearTimeout(revert.current), []);
   const lens = useAnimatedStyle(() => ({ opacity: shown.get(), transform: [{ translateX: x.get() }] }));
   const radius = tall ? 16 : small ? 9 : 12;
   return (
@@ -148,9 +162,15 @@ export function Seg<V extends string | number>({
             accessibilityState={{ selected: on }}
             accessibilityLabel={o.label}
             onPress={() => {
-              if (on) return;
+              if (segW ? aim.current === j * segW : on) return; // already there, or already on its way
               tick();
+              if (segW) glide(j * segW);
               onChange(o.value);
+              // a choice the earbuds didn't take: the lens goes back to what's true (see Switch)
+              clearTimeout(revert.current);
+              revert.current = setTimeout(() => {
+                if (at.current >= 0 && aim.current !== at.current) glide(at.current);
+              }, REVERT_MS);
             }}
             style={[s.segBtn, { minHeight: tall ? 72 : small ? 34 : 40 }]}
           >
@@ -165,20 +185,85 @@ export function Seg<V extends string | number>({
   );
 }
 
-/** An on/off switch: the knob glides with a spring and stretches while it's held. */
+/** Shono's tagline ("Shono" is "listen" in Bangla). */
+export const TAGLINE = "Listen your way.";
+
+/** Shono's mark: two earbuds on the accent. */
+export function Mark({ size = 30 }: { size?: number }) {
+  const c = useColors();
+  return (
+    <View style={{ width: size, height: size, borderRadius: size * 0.3, backgroundColor: c.signalFill, alignItems: "center", justifyContent: "center" }}>
+      <BudsIcon color={c.onSignal} size={size * 0.58} strokeWidth={2.4} />
+    </View>
+  );
+}
+
+/** Shono's mark, name and tagline together: the first run's Welcome and the About card in App settings. */
+export function Lockup({ size = 30 }: { size?: number }) {
+  const c = useColors();
+  return (
+    <View style={s.lockup} accessible accessibilityRole="header" accessibilityLabel={`Shono. ${TAGLINE}`}>
+      <Mark size={size} />
+      <View>
+        <Text style={[s.lockName, { color: c.ink, fontSize: Math.round(size * 0.63), lineHeight: Math.round(size * 0.74) }]}>Shono</Text>
+        <Text style={[s.lockTag, { color: c.ink2 }]}>{TAGLINE}</Text>
+      </View>
+    </View>
+  );
+}
+
+/** App settings, at the top right: a round button in the cards' glass that mirrors Shono's mark on the left (both sit
+ * 18 in from their edge). `attention`: a dot while something there needs doing; today, Android may pause Shono in the
+ * background ("Run without limits" is off while Shono keeps working there). `viewRef`: for the tour's spotlight. */
+export function GearButton({ onPress, attention, size = 34, viewRef }: { onPress: () => void; attention?: boolean; size?: number; viewRef?: RefObject<ComponentRef<typeof View> | null> }) {
+  const c = useColors();
+  const f = useSurface();
+  return (
+    <View ref={viewRef} collapsable={false}>
+      <Press
+        accessibilityRole="button"
+        accessibilityLabel={attention ? "App settings, needs attention" : "App settings"}
+        accessibilityHint={attention ? "Run without limits is off, so Android may pause Shono in the background" : undefined}
+        hitSlop={8}
+        scale={0.9}
+        onPress={onPress}
+        style={[s.gear, { width: size, height: size, borderRadius: size / 2, backgroundColor: f.bg, borderColor: f.edge }]}
+      >
+        <Ionicons name="settings-outline" size={Math.round(size * 0.56)} color={c.ink} />
+      </Press>
+      {attention && <View pointerEvents="none" style={[s.gearDot, { backgroundColor: c.warn, borderColor: groundOf(c) }]} />}
+    </View>
+  );
+}
+
+/** An on/off switch: the knob glides with a spring and stretches while it's held. Knob and track answer the tap on the
+ * UI thread at once; the app's re-render (a whole-app one for the look settings) follows. */
 export function Switch({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
   const c = useColors();
   const on = useSharedValue(value ? 1 : 0);
   const held = useSharedValue(0);
   const reduce = useReducedMotion();
-  useEffect(() => on.set(reduce ? (value ? 1 : 0) : withSpring(value ? 1 : 0, SPRING)), [value, reduce, on]);
+  const want = useRef(value); // the latest tap's value: a second tap before the re-render flips it back, not again
+  const latest = useRef(value);
+  const revert = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const slide = (v: boolean) => on.set(reduce ? (v ? 1 : 0) : withSpring(v ? 1 : 0, SPRING));
+  useEffect(() => {
+    latest.current = value;
+    if (want.current === value) return; // the tap's value arrived: the knob is already on its way
+    want.current = value;
+    slide(value);
+  }, [value, reduce, on]); // eslint-disable-line react-hooks/exhaustive-deps -- slide only uses these
+  useEffect(() => () => clearTimeout(revert.current), []);
+  const offColor = c.off;
+  const onColor = c.signalFill;
   const knob = useAnimatedStyle(() => ({
     // 20 px of travel; held, the knob grows 6 px toward the side it's heading to
     transform: [{ translateX: on.get() * 20 - held.get() * 6 * on.get() }],
     width: 26 + held.get() * 6,
   }));
+  const track = useAnimatedStyle(() => ({ backgroundColor: interpolateColor(Math.min(1, Math.max(0, on.get())), [0, 1], [offColor, onColor]) }));
   return (
-    <Pressable
+    <AnimatedPressable
       accessibilityRole="switch"
       accessibilityLabel={label}
       accessibilityState={{ checked: value }}
@@ -186,13 +271,24 @@ export function Switch({ value, onChange, label }: { value: boolean; onChange: (
       onPressIn={() => held.set(withTiming(1, { duration: 100 }))}
       onPressOut={() => held.set(withTiming(0, { duration: 140 }))}
       onPress={() => {
+        const next = !want.current;
+        want.current = next;
+        slide(next);
         tick();
-        onChange(!value);
+        onChange(next);
+        // a change that was refused or is still being asked about (Last seen asks first; the earbuds can say no):
+        // the knob goes back to what's true
+        clearTimeout(revert.current);
+        revert.current = setTimeout(() => {
+          if (want.current === latest.current) return;
+          want.current = latest.current;
+          slide(latest.current);
+        }, REVERT_MS);
       }}
-      style={[s.switch, { backgroundColor: value ? c.signalFill : c.off }]}
+      style={[s.switch, track]}
     >
       <Animated.View style={[s.knob, knob]} />
-    </Pressable>
+    </AnimatedPressable>
   );
 }
 
@@ -244,11 +340,30 @@ export function Button({ label, onPress, kind = "sec", style }: { label: string;
   );
 }
 
-/** A setting: title, a line about it, and its switch. */
-export function ToggleRow({ title, detail, value, onChange, first }: { title: string; detail?: string; value: boolean; onChange: (v: boolean) => void; first?: boolean }) {
+/** A setting: title, a line about it, and its switch. `icon`: a glyph in a round well before it, lit while it's on. */
+export function ToggleRow({
+  title,
+  detail,
+  value,
+  onChange,
+  first,
+  icon,
+}: {
+  title: string;
+  detail?: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+  first?: boolean;
+  icon?: ComponentProps<typeof Ionicons>["name"];
+}) {
   const c = useColors();
   return (
     <View style={[s.row, !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.hair }]}>
+      {icon && (
+        <View style={[s.rowIcon, { backgroundColor: value ? c.tint : c.well }]}>
+          <Ionicons name={icon} size={18} color={value ? c.signalInk : c.ink2} />
+        </View>
+      )}
       <View style={s.grow}>
         <Txt v="strong">{title}</Txt>
         {detail ? <Txt v="sub">{detail}</Txt> : null}
@@ -257,6 +372,8 @@ export function ToggleRow({ title, detail, value, onChange, first }: { title: st
     </View>
   );
 }
+
+const FADE = 56; // a pill under a row's fading edge doesn't count as in view
 
 /** A row that scrolls sideways (EQ pills, Game EQ chips) and shows there's more: where it continues, the edge fades and
  * a small arrow scrolls it on; both go once that end is reached (the user: people must see they can swipe for more).
@@ -267,6 +384,21 @@ export function ScrollRow({ children, edge = 16, label }: { children: ReactNode;
   const [w, setW] = useState(0);
   const [content, setContent] = useState(0);
   const [x, setX] = useState(0);
+  const scrollX = useRef(0);
+  // the chosen pill (the child whose `on` is true) stays in view: on opening the row scrolls straight to it, and to a
+  // new choice made elsewhere it glides (the user: with several EQs, the one playing was off the end of the row)
+  const kids = Children.toArray(children);
+  const chosen = kids.findIndex((k) => isValidElement<{ on?: boolean }>(k) && !!k.props.on);
+  const spots = useRef<{ x: number; w: number }[]>([]);
+  const [laid, setLaid] = useState(0); // bumped when the chosen pill has its place
+  const seen = useRef(false);
+  useEffect(() => {
+    const p = spots.current[chosen];
+    if (chosen < 0 || !p || !w) return;
+    const inView = p.x >= scrollX.current + FADE && p.x + p.w <= scrollX.current + w - FADE;
+    if (!inView) row.current?.scrollTo({ x: Math.max(0, p.x + p.w / 2 - w / 2), animated: seen.current });
+    seen.current = true;
+  }, [chosen, laid, w]);
   const after = content - w - x > 4;
   const before = x > 4;
   const by = (dir: number) => row.current?.scrollTo({ x: Math.max(0, x + dir * w * 0.7), animated: true });
@@ -297,10 +429,23 @@ export function ScrollRow({ children, edge = 16, label }: { children: ReactNode;
         accessibilityLabel={label}
         contentContainerStyle={[s.scrollRow, { paddingHorizontal: edge }]}
         onContentSizeChange={(cw) => setContent(cw)}
-        onScroll={(e) => setX(e.nativeEvent.contentOffset.x)}
+        onScroll={(e) => {
+          scrollX.current = e.nativeEvent.contentOffset.x;
+          setX(scrollX.current);
+        }}
         scrollEventThrottle={32}
       >
-        {children}
+        {kids.map((k, i) => (
+          <View
+            key={isValidElement(k) && k.key != null ? k.key : i}
+            onLayout={(e) => {
+              spots.current[i] = { x: e.nativeEvent.layout.x, w: e.nativeEvent.layout.width };
+              if (i === chosen) setLaid((n) => n + 1);
+            }}
+          >
+            {k}
+          </View>
+        ))}
       </ScrollView>
       {before && side(-1)}
       {after && side(1)}
@@ -346,6 +491,11 @@ export function Rise({ k = 0, children, style }: { k?: number; children: ReactNo
 
 const s = StyleSheet.create({
   grow: { flex: 1, minWidth: 0 },
+  lockup: { flexDirection: "row", alignItems: "center", gap: 10 },
+  lockName: { fontFamily: F.display, letterSpacing: -0.3 },
+  lockTag: { fontFamily: F.medium, fontSize: 12.5, lineHeight: 16 },
+  gear: { borderWidth: StyleSheet.hairlineWidth, alignItems: "center", justifyContent: "center" },
+  gearDot: { position: "absolute", top: -1, right: -1, width: 11, height: 11, borderRadius: 6, borderWidth: 2 },
   card: { borderRadius: 22, padding: 16, borderWidth: StyleSheet.hairlineWidth, gap: 12 },
   head: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 28 },
   seg: { flexDirection: "row" },
@@ -356,6 +506,7 @@ const s = StyleSheet.create({
   pills: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   btn: { height: 46, paddingHorizontal: 18, borderRadius: 14, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   row: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 60, paddingVertical: 8 },
+  rowIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   chip: { height: 28, paddingHorizontal: 10, borderRadius: 14, justifyContent: "center", maxWidth: 200 },
   link: { flexDirection: "row", alignItems: "center", gap: 2, minHeight: 32 },
   scrollRow: { gap: 8 },

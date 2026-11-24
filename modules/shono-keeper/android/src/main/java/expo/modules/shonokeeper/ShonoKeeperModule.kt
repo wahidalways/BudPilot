@@ -180,6 +180,7 @@ class ShonoKeeperModule : Module() {
     }
     AsyncFunction("getLastSeen") { appContext.reactContext?.let { LastSeen.read(it) } }
     Function("clearLastSeen") { appContext.reactContext?.let { LastSeen.clear(it) } }
+    Function("locationOn") { appContext.reactContext?.let { LastSeen.locationOn(it) } ?: true }
 
     /** The devices connected to the phone for sound (music or calls): [{ address, name }]. Empty without Bluetooth
      * access or with Bluetooth off. */

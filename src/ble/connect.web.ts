@@ -22,7 +22,6 @@ type Bluetooth = { requestDevice(options: object): Promise<Device> };
 
 let known: Device | undefined; // the earbuds picked last, so reconnecting needs no device picker
 
-export const hasKnownEarbuds = () => !!known;
 export const knownEarbudsAddress = (): string | undefined => undefined; // the browser doesn't reveal it
 /** The browser handles Bluetooth being off in its own device picker. */
 export type BluetoothState = "on" | "off" | "unknown";

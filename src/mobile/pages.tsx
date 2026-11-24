@@ -1,7 +1,7 @@
 // The phone's tabs and the tablet's pages: Sound, Equalizer, Game, Touch controls, and App settings.
 import { type ComponentProps, use, useEffect, useState } from "react";
 import { AppState, Linking, Platform, Pressable, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
-import Animated, { Easing, FadeIn, interpolate, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withSequence, withSpring, withTiming } from "react-native-reanimated";
+import Animated, { Easing, FadeIn, FadeOut, interpolate, LinearTransition, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withSequence, withSpring, withTiming } from "react-native-reanimated";
 import Svg, { G, Path } from "react-native-svg";
 
 import { usingSample } from "@/ble/connect";
@@ -9,7 +9,7 @@ import { HOCO_EQ35 as P } from "@/devices/hoco-eq35";
 import { ancOn } from "@/hooks/use-earbuds";
 import { ANC_LEVELS } from "@/hooks/use-adaptive-anc";
 import { EqCurve } from "@/screens/home/eq-curve";
-import { CREDIT_NAME, gameEqChoices, MODE_SUBS, eqChoices } from "@/screens/home/parts";
+import { CREDIT_NAME, MODE_SUBS, eqChoices } from "@/screens/home/parts";
 import { fnName, gesture } from "@/screens/home/touch-controls";
 import { type BudPilot, modeName } from "@/screens/home/use-bud-pilot";
 import { useEqEditor } from "@/screens/home/use-eq-editor";
@@ -23,13 +23,12 @@ import { askBackgroundUnrestricted, backgroundUnrestricted, clearLog, keeperAvai
 
 import Ionicons from "@expo/vector-icons/Ionicons";
 
-import { Dots } from "./art";
-import { BudGlyph, EAR_OUTLINE, FnGlyph, NoiseGlyph } from "./icons";
+import { EAR_OUTLINE, FnGlyph, NoiseGlyph } from "./icons";
 import { BATTERY_STYLES } from "./battery";
 import { PageActive, useGlass, useSurface } from "./glass";
-import { PHONE_STRENGTHS } from "./home";
+import { eqTitle, GameEqChips, PHONE_STRENGTHS } from "./home";
 import { LatencyCheck } from "./latency";
-import { Button, Card, CardHead, Pill, Pills, Press, ScrollRow, Seg, Switch, T, tick, ToggleRow, Txt } from "./kit";
+import { Button, Card, CardHead, Chip, Lockup, Pill, Pills, Press, Seg, Switch, T, tick, ToggleRow, Txt } from "./kit";
 import { type Anchor, measureAnchor, MenuRow, Popover, Sheet } from "./sheet";
 
 /** What pages need to know about where they are. */
@@ -78,6 +77,8 @@ function Field({ mode, level }: { mode: number; level: number }) {
   return (
     <View style={[s.field, { backgroundColor: surface.bg, borderColor: surface.edge, boxShadow: surface.shine }]} aria-hidden>
       <View style={{ width: 360, height: 150, transform: [{ scale }] }}>
+        {/* a soft glow of the accent around the ear: strongest with ANC, softer with Transparency, none when off */}
+        <View pointerEvents="none" style={[s.glow, { opacity: [0, 1, 0.6][mode] ?? 0, backgroundImage: `radial-gradient(circle closest-side, ${c.tint} 0%, ${c.tint} 35%, rgba(0,0,0,0) 100%)` }]} />
         {[0, 1, 2].map((k) => (
           <Wave key={k} t={t} phase={k / 3} mode={mode} reduce={reduce} color={c.signal} />
         ))}
@@ -90,10 +91,13 @@ function Field({ mode, level }: { mode: number; level: number }) {
           </G>
         </Svg>
       </View>
-      <Text style={[T.small, s.fieldCap, { color: c.ink2 }]}>
-        <Text style={{ color: c.ink, fontFamily: F.semibold }}>{modeName(mode)}</Text>
-        {mode === 1 ? ` · ${P.ancLevels[level]?.name ?? ""}` : ""}
-      </Text>
+      <View style={s.fieldCap}>
+        <Text style={[s.fieldMode, { color: c.ink }]}>{modeName(mode)}</Text>
+        <Text style={[T.small, { color: c.ink2 }]}>
+          {mode === 1 ? `${P.ancLevels[level]?.name ?? ""} · ` : ""}
+          {MODE_SUBS[mode]}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -140,7 +144,7 @@ function ModeTile({ mode, on, onPress }: { mode: number; on: boolean; onPress: (
         <Ionicons name="checkmark" size={13} color={c.onSignal} />
       </Animated.View>
       <NoiseGlyph mode={mode} on={on} color={on ? c.signalInk : c.ink} size={30} />
-      <Txt v="strong" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={{ fontFamily: F.semibold, fontSize: 14 }}>
+      <Txt v="strong" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={{ fontFamily: F.semibold, fontSize: 13, letterSpacing: -0.1 }}>
         {modeName(mode)}
       </Txt>
       <Txt v="sub" style={{ fontSize: 12 }}>
@@ -163,8 +167,9 @@ export function SoundPage({ b }: { b: BudPilot }) {
           <ModeTile key={m} mode={m} on={state.anc === m} onPress={() => void b.setNoise(m === 1 ? ancOn() : { mode: m, ncLevel, adaptive: false })} />
         ))}
       </View>
+      {/* only with ANC (the user's choice); it fades in and out, and the card under it glides to its place */}
       {state.anc === 1 && (
-        <Animated.View entering={FadeIn.duration(260)}>
+        <Animated.View entering={FadeIn.duration(220)} exiting={FadeOut.duration(140)}>
           <Card>
             <CardHead title="ANC strength" />
             <Seg
@@ -176,7 +181,9 @@ export function SoundPage({ b }: { b: BudPilot }) {
           </Card>
         </Animated.View>
       )}
-      <KeepCard b={b} />
+      <Animated.View layout={LinearTransition.duration(220)}>
+        <KeepCard b={b} />
+      </Animated.View>
     </View>
   );
 }
@@ -187,12 +194,13 @@ export function KeepCard({ b }: { b: BudPilot }) {
     <Card>
       <ToggleRow
         first
+        icon="shield-checkmark-outline"
         title="Keep my noise setting"
         detail="Undoes the earbuds' own switches, even when Shono is in the background (it shows a small notification). Press and hold still works."
         value={b.keep}
         onChange={b.setKeep}
       />
-      <ToggleRow title="Tell me when Shono steps in" detail="When it puts your noise setting back" value={b.notice.on} onChange={b.notice.setOn} />
+      <ToggleRow icon="notifications-outline" title="Tell me when Shono steps in" detail="When it puts your noise setting back" value={b.notice.on} onChange={b.notice.setOn} />
     </Card>
   );
 }
@@ -243,13 +251,6 @@ export function EqPage({ b, ui, one, fill }: { b: BudPilot; ui: Ui; one?: boolea
   return <Eq b={b} ui={ui} one={one} fill={fill} />;
 }
 
-const EQ_TAGS = { game: "Game mode", preset: "Preset", mine: "Saved", custom: "Not saved" };
-/** What the EQ plays, by name, and what kind of thing that is ("Movies", "Saved"). */
-export function eqTitle(b: BudPilot, e: ReturnType<typeof useEqEditor>) {
-  const name = e.kind === "game" ? GAME_EQ_NAME : e.kind === "preset" ? (P.eqPresets.find((p) => p.mode === b.state?.eqMode)?.name ?? "Preset") : (e.playing?.name ?? "Custom");
-  return { name, tag: EQ_TAGS[e.kind] };
-}
-
 function Eq({ b, ui, one, fill }: { b: BudPilot; ui: Ui; one?: boolean; fill?: boolean }) {
   const c = useColors();
   const e = useEqEditor(b);
@@ -258,12 +259,22 @@ function Eq({ b, ui, one, fill }: { b: BudPilot; ui: Ui; one?: boolean; fill?: b
   const [menu, setMenu] = useState<Anchor>(); // the one-card form's ⋯ menu, beside its button
   const [room, setRoom] = useState(230); // `fill`: the curve's height, as much as the card has
   const { name, tag } = eqTitle(b, e);
+  // the band the stepper adjusts: the last point touched, on this EQ (picking another EQ puts the hint back)
+  const [pick, setPick] = useState<{ band: number; on: string }>();
+  const band = pick?.on === name && e.kind !== "game" ? pick.band : undefined;
+  const nudge = (d: number) => {
+    if (band === undefined) return;
+    const v = Math.max(-P.eqMax, Math.min(P.eqMax, e.gains[band] + d));
+    if (v === e.gains[band]) return;
+    tick();
+    e.commit(e.gains.map((g, i) => (i === band ? v : g))); // like a drag: a preset becomes your own Custom curve
+  };
   const sheets = (
     <>
       <Sheet
         open={!!e.naming}
         tablet={ui.tablet}
-        title={e.naming?.id ? "Rename" : "Save as…"}
+        title={e.naming?.id ? "Rename" : "Save EQ"}
         sub={e.naming?.id ? "New name" : e.kind === "preset" ? "Starts from this preset's shape. Drag the points to make it yours." : "Saves a copy of what's playing now."}
         onClose={() => e.setNaming(undefined)}
       >
@@ -298,12 +309,16 @@ function Eq({ b, ui, one, fill }: { b: BudPilot; ui: Ui; one?: boolean; fill?: b
           max={P.eqMax}
           faded={e.kind !== "game" && e.faded}
           readOnly={e.kind === "game"}
-          onChange={e.setDraft}
           onCommit={e.commit}
-          height={one ? room : ui.tablet ? 280 : 220}
+          onStep={tick}
+          onPick={(i) => setPick({ band: i, on: name })}
+          height={one ? room : ui.tablet ? 320 : 264} // taller than it was (220): more room per dB for a finger
         />
   );
-  const note = (
+  const note =
+    band !== undefined ? (
+      <BandStepper band={band} gain={e.gains[band]} onStep={nudge} />
+    ) : (
         <View style={s.note}>
           <Ionicons name="information-circle-outline" size={16} color={c.ink2} />
           <Txt v="sub" style={s.grow}>
@@ -316,7 +331,7 @@ function Eq({ b, ui, one, fill }: { b: BudPilot; ui: Ui; one?: boolean; fill?: b
                   : "Drag a point. Save it to keep it."}
           </Txt>
         </View>
-  );
+    );
   const pills = (
         <Pills>
           {eqChoices(b).map((ch) => (
@@ -327,21 +342,17 @@ function Eq({ b, ui, one, fill }: { b: BudPilot; ui: Ui; one?: boolean; fill?: b
   );
   // what can be done with what plays: save an unsaved curve; rename, flatten or delete one of yours; leave Game EQ
   const canFlat = (e.kind === "custom" || e.kind === "mine") && !e.isFlat;
-  const buttons = e.kind === "preset" && !canFlat ? null : (
-      <View style={s.btns}>
-        {e.kind === "custom" && <Button label="Save as…" kind="pri" onPress={() => e.setNaming({ name: "" })} />}
-        {e.kind === "mine" && <Button label="Rename" kind="out" onPress={() => e.setNaming({ id: e.playing!.id, name: e.playing!.name })} />}
-        {canFlat && <Button label="Reset to flat" kind="out" onPress={e.resetToFlat} />}
-        {e.kind === "mine" && <Button label="Delete" kind="danger" onPress={() => setDeleting({ id: e.playing!.id, name: e.playing!.name })} />}
-        {e.kind === "game" && <Button label={`Turn off ${GAME_EQ_NAME}`} kind="out" onPress={() => b.game.setEqOn(false)} />}
-      </View>
-  );
+  // they sit in a strip of fixed height, so the card keeps its size as you switch EQs (the user: Rename and Delete
+  // appearing "resized the card"); a preset has none (Save as… only for an unsaved curve, the user didn't want it
+  // showing all the time). Reset to flat dims, rather than going, while the curve is flat
+  const all: EqAction[] = [];
+  if (e.kind === "custom") all.push({ label: "Save", icon: "bookmark-outline", primary: true, run: () => e.setNaming({ name: "" }) });
+  if (e.kind === "mine") all.push({ label: "Rename", icon: "create-outline", iconOnly: true, run: () => e.setNaming({ id: e.playing!.id, name: e.playing!.name }) });
+  if (e.kind === "custom" || e.kind === "mine") all.push({ label: "Reset to flat", icon: "refresh-outline", off: !canFlat, run: e.resetToFlat });
+  if (e.kind === "mine") all.push({ label: "Delete", icon: "trash-outline", danger: true, iconOnly: true, run: () => setDeleting({ id: e.playing!.id, name: e.playing!.name }) });
+  if (e.kind === "game") all.push({ label: `Turn off ${GAME_EQ_NAME}`, icon: "power-outline", run: () => b.game.setEqOn(false) });
   if (one) {
-    const actions: { label: string; icon: ComponentProps<typeof Ionicons>["name"]; danger?: boolean; run: () => void }[] = [];
-    if (e.kind === "mine") actions.push({ label: "Rename", icon: "create-outline", run: () => e.setNaming({ id: e.playing!.id, name: e.playing!.name }) });
-    if (canFlat) actions.push({ label: "Reset to flat", icon: "refresh-outline", run: e.resetToFlat });
-    if (e.kind === "mine") actions.push({ label: "Delete", icon: "trash-outline", danger: true, run: () => setDeleting({ id: e.playing!.id, name: e.playing!.name }) });
-    if (e.kind === "game") actions.push({ label: `Turn off ${GAME_EQ_NAME}`, icon: "power-outline", run: () => b.game.setEqOn(false) });
+    const actions = all.filter((a) => !a.primary && !a.off); // Save sits in the card's heading; the rest in its ⋯ menu
     return (
       <Card style={fill && s.grow}>
         {sheets}
@@ -405,15 +416,94 @@ function Eq({ b, ui, one, fill }: { b: BudPilot; ui: Ui; one?: boolean; fill?: b
         {EQ_LEDE[e.kind]}
       </Txt>
       <Card>
-        <CardHead title={name} right={<Txt v="sub">{tag}</Txt>} />
+        <CardHead title={name} right={<Chip quiet={e.kind !== "mine"}>{tag}</Chip>} />
         {curve}
         {note}
+        <EqActions actions={all} k={e.kind} />
       </Card>
       <Card>
         <CardHead title="Sound" />
         {pills}
       </Card>
-      {buttons}
+    </View>
+  );
+}
+
+const hz = (label: string) => (label.endsWith("K") ? `${label.slice(0, -1)} kHz` : `${label} Hz`);
+const dbText = (g: number) => `${g > 0 ? "+" : g < 0 ? "−" : ""}${Math.abs(g)} dB`; // a real minus sign
+
+/** Fine-tuning for the point last touched, in the hint's place under the chart: one dB a tap, for when a finger is too
+ * coarse for one step. */
+function BandStepper({ band, gain, onStep }: { band: number; gain: number; onStep: (d: number) => void }) {
+  const c = useColors();
+  const step = (d: number, icon: "remove" | "add", label: string) => {
+    const off = d < 0 ? gain <= -P.eqMax : gain >= P.eqMax;
+    return (
+      <Press
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityState={{ disabled: off }}
+        disabled={off}
+        hitSlop={6}
+        scale={0.88}
+        onPress={() => onStep(d)}
+        style={[s.stepBtn, { backgroundColor: c.well }, off && s.actOff]}
+      >
+        <Ionicons name={icon} size={20} color={c.ink} />
+      </Press>
+    );
+  };
+  return (
+    <View style={s.stepper} accessibilityLabel={`${hz(P.eqBands[band])}, ${dbText(gain)}`}>
+      {step(-1, "remove", `Lower ${hz(P.eqBands[band])}`)}
+      <View style={s.stepMid}>
+        <Txt v="small" muted>
+          {hz(P.eqBands[band])}
+        </Txt>
+        <Text style={[T.strong, { fontFamily: F.semibold, fontSize: 16, lineHeight: 20, color: gain ? c.signalInk : c.ink }]}>{dbText(gain)}</Text>
+      </View>
+      {step(1, "add", `Raise ${hz(P.eqBands[band])}`)}
+    </View>
+  );
+}
+
+// iconOnly: Rename and Delete beside Reset to flat (three labels don't fit a phone's width; "Reset to flat" was cut short)
+type EqAction = { label: string; icon: ComponentProps<typeof Ionicons>["name"]; primary?: boolean; danger?: boolean; off?: boolean; iconOnly?: boolean; run: () => void };
+
+/** What can be done with the curve, under it in its card: side-by-side buttons, an icon beside each label. Save is the
+ * accent; Delete reads red without shouting. They used to be full-width buttons at the foot of the page, away from the
+ * curve they act on. The strip keeps its height when there are none (a preset), and a new set fades in over the old
+ * one (`k`: what plays), so nothing below moves. */
+function EqActions({ actions, k }: { actions: EqAction[]; k: string }) {
+  const c = useColors();
+  return (
+    <View style={s.actSlot}>
+      {actions.length > 0 && (
+    <Animated.View key={k} entering={FadeIn.duration(180)} exiting={FadeOut.duration(120)} style={[StyleSheet.absoluteFill, s.acts]}>
+      {actions.map((a) => {
+        const ink = a.primary ? c.signalInk : a.danger ? c.danger : c.ink;
+        return (
+          <Press
+            key={a.label}
+            accessibilityRole="button"
+            accessibilityLabel={a.label}
+            accessibilityState={{ disabled: !!a.off }}
+            disabled={a.off}
+            onPress={a.run}
+            // Save: the accent's tint, like a chosen pill (a solid block outweighed everything else in the card)
+            style={[s.act, a.iconOnly ? s.actIcon : s.actGrow, a.primary ? { backgroundColor: c.tint, borderColor: c.tintEdge, borderWidth: 1 } : { backgroundColor: c.well }, a.off && s.actOff]}
+          >
+            <Ionicons name={a.icon} size={a.iconOnly ? 20 : 18} color={ink} />
+            {!a.iconOnly && (
+            <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.78} style={[T.strong, { fontSize: 14, fontFamily: F.semibold, color: ink, flexShrink: 1 }]}>
+              {a.label}
+            </Text>
+            )}
+          </Press>
+        );
+      })}
+    </Animated.View>
+      )}
     </View>
   );
 }
@@ -439,72 +529,36 @@ export function Turbo({ on }: { on: boolean }) {
   );
 }
 
-/** Game mode's switch, what it does, and the delay chip. */
+/** Game mode's switch, and the delay chip under its name (the card around it lights while it's on). */
 function GameHead({ b }: { b: BudPilot }) {
   const c = useColors();
   const g = b.game;
   return (
-    <>
-      <View style={s.row}>
-        <View style={[s.glyphBig, { backgroundColor: g.active ? c.tint : c.well }]}>
-          <Ionicons name={g.active ? "game-controller" : "game-controller-outline"} size={28} color={g.active ? c.signalInk : c.ink2} />
-        </View>
-        <View style={s.grow}>
-          <Txt v="name" style={{ fontSize: 18 }}>
-            Game mode
-          </Txt>
-          <Txt v="sub">Sound lines up with what you see</Txt>
-        </View>
-        <Switch value={g.active} onChange={g.setOn} label="Game mode" />
+    <View style={s.row}>
+      <View style={[s.glyphBig, { backgroundColor: g.active ? c.signalFill : c.well }]}>
+        <Ionicons name={g.active ? "game-controller" : "game-controller-outline"} size={28} color={g.active ? c.onSignal : c.ink2} />
       </View>
-      <Turbo on={g.active} />
-    </>
-  );
-}
-
-/** EQ while gaming, and which EQ plays then. */
-export function GameEqRow({ b, first }: { b: BudPilot; first?: boolean }) {
-  const g = b.game;
-  return (
-    <>
-      <ToggleRow first={first} title="EQ while gaming" detail="Plays while Game mode is on. Your own EQ comes back after." value={g.prefs.eqOn} onChange={g.setEqOn} />
-      {g.prefs.eqOn && (
-        <Animated.View entering={FadeIn.duration(240)}>
-          <Pills>
-            {gameEqChoices(b).map((ch) => (
-              <Pill key={ch.key} label={ch.label} on={ch.on} onPress={ch.onPress} />
-            ))}
-          </Pills>
-        </Animated.View>
-      )}
-    </>
+      <View style={[s.grow, s.gameName]}>
+        <Txt v="name" style={{ fontSize: 18 }}>
+          Game mode
+        </Txt>
+        <Turbo on={g.active} />
+      </View>
+      <Switch value={g.active} onChange={g.setOn} label="Game mode" />
+    </View>
   );
 }
 
 /** EQ while gaming as one row of chips you tap (a tablet's Game card): Off, Game EQ, the presets and your EQs, scrolling
  * sideways; the row keeps its height whatever is chosen. */
-export function GameEqPicker({ b }: { b: BudPilot }) {
+export function GameEqPicker({ b, first }: { b: BudPilot; first?: boolean }) {
   const c = useColors();
-  const g = b.game;
   return (
-    <View style={[s.chipsHead, { borderTopColor: c.hair }]}>
+    <View style={first ? undefined : [s.chipsHead, { borderTopColor: c.hair }]}>
       <Txt v="strong">EQ while gaming</Txt>
       <Txt v="sub">Plays while Game mode is on. Your own EQ comes back after.</Txt>
       <View style={s.chipsGap} />
-      <ScrollRow label="EQ while gaming">
-        <Pill label="Off" on={!g.prefs.eqOn} onPress={() => g.setEqOn(false)} />
-        {gameEqChoices(b).map((ch) => (
-          <Pill
-            key={ch.key}
-            label={ch.label}
-            on={g.prefs.eqOn && ch.on}
-            onPress={() => {
-              if (!g.prefs.eqOn) g.setEqOn(true);
-              ch.onPress();
-            }}
-          />
-        ))}
-      </ScrollRow>
+      <GameEqChips b={b} />
     </View>
   );
 }
@@ -517,6 +571,7 @@ export function AutoGamesRow({ b, first }: { b: BudPilot; first?: boolean }) {
     <>
       <ToggleRow
         first={first}
+        icon="sparkles-outline"
         title="Turn on with games"
         detail="Game mode comes on while a game is open, and goes off when you leave it."
         value={g.prefs.auto}
@@ -538,14 +593,16 @@ export function AutoGamesRow({ b, first }: { b: BudPilot; first?: boolean }) {
 }
 
 export function GamePage({ b }: { b: BudPilot }) {
+  const c = useColors();
   if (b.status !== "connected" || !b.state) return <NotConnected b={b} />;
   return (
     <View style={s.stack}>
-      <Card>
+      <Card style={b.game.active && { backgroundColor: c.tint, borderColor: c.tintEdge }}>
         <GameHead b={b} />
       </Card>
       <Card>
-        <GameEqRow b={b} first />
+        {/* one steady row of choices, Off first: it used to be a switch that pushed a row of pills in and out */}
+        <GameEqPicker b={b} first />
       </Card>
       {keeperAvailable() && (
         <Card>
@@ -644,60 +701,21 @@ export function useKeyPicker(b: BudPilot, tablet: boolean) {
   return { sheet, pick, fnOf, isSaving, tapCounts };
 }
 
+type KeyPicker = ReturnType<typeof useKeyPicker>;
+
 export function TouchPage({ b, ui }: { b: BudPilot; ui: Ui }) {
   const c = useColors();
-  const { sheet, pick, fnOf, isSaving, tapCounts } = useKeyPicker(b, ui.tablet);
+  const k = useKeyPicker(b, ui.tablet);
   if (b.status !== "connected" || !b.state) return <NotConnected b={b} />;
   const state = b.state;
   return (
     <View style={s.stack}>
-      {sheet}
-      <View style={ui.tablet ? s.two : s.stack}>
-        {EARS.map((e) => (
-          <Card key={e.ear} style={ui.tablet && s.grow}>
-            <View style={s.row}>
-              <View style={[s.glyphSmall, { backgroundColor: c.well }]}>
-                <BudGlyph color={c.ink2} flip={e.ear === 2} size={20} />
-              </View>
-              <Txt v="head">{e.label} earbud</Txt>
-            </View>
-            {tapCounts.map((taps, i) => {
-              const fn = fnOf(e.ear, taps);
-              return (
-                <Pressable
-                  key={taps}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${e.label} ${gesture(taps)}: ${fn === undefined ? "not set" : fnName(fn)}. Change`}
-                  onPress={(ev) => fn !== undefined && pick(e.ear, taps, ev.currentTarget)}
-                  style={({ pressed }) => [s.gest, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.hair }, pressed && { backgroundColor: c.well }]}
-                >
-                  <Dots n={taps} color={c.ink} />
-                  <View style={s.grow}>
-                    <View style={s.inline}>
-                      {fn !== undefined && <FnGlyph fn={fn} color={c.signalInk} size={18} />}
-                      <Txt v="strong" style={{ opacity: isSaving(e.ear, taps) ? 0.6 : 1 }}>
-                        {fn === undefined ? "—" : fnName(fn)}
-                      </Txt>
-                    </View>
-                    <Txt v="sub">{isSaving(e.ear, taps) ? `${gesture(taps)} · Saving…` : gesture(taps)}</Txt>
-                  </View>
-                </Pressable>
-              );
-            })}
-          </Card>
-        ))}
-      </View>
-      <View style={ui.tablet ? s.two : s.stack}>
-        <Card style={ui.tablet && s.grow}>
-          <CardHead title="Press and hold" />
-          <KV k="Noise control" v="Off → ANC → Transparency" />
-        </Card>
-        <Card style={ui.tablet && s.grow}>
-          <CardHead title="Calls" />
-          <KV k="Incoming call" v="Tap answers" />
-          <KV k="During a call" v="Double tap hangs up" />
-        </Card>
-      </View>
+      {k.sheet}
+      <TapsTiles k={k} />
+      <Card>
+        <CardHead title="Built in" right={<Txt v="sub">Can&apos;t be changed</Txt>} />
+        <TouchFacts />
+      </Card>
       {state.wearDetection !== undefined && (
         <Card>
           <WearRow b={b} first />
@@ -712,21 +730,78 @@ export function TouchPage({ b, ui }: { b: BudPilot; ui: Ui }) {
   );
 }
 
+/** One tap's action, as shown in the designs: its name (or "Saving…" while the earbuds take a new one). */
+const actionText = (k: KeyPicker, ear: number, taps: number) => {
+  const fn = k.fnOf(ear, taps);
+  return k.isSaving(ear, taps) ? "Saving…" : fn === undefined ? "—" : fnName(fn);
+};
+const actionLabel = (k: KeyPicker, ear: number, taps: number) => {
+  const fn = k.fnOf(ear, taps);
+  return `${EARS[ear - 1].label} earbud, ${gesture(taps)}: ${fn === undefined ? "not set" : fnName(fn)}. Change`;
+};
+
+/** The taps (the user's pick of three designs): Left or Right, then a large tile per tap, its action in a filled accent
+ * circle and its name big, the tap under it. Tap a tile to choose what it does. */
+function TapsTiles({ k }: { k: KeyPicker }) {
+  const c = useColors();
+  const [ear, setEar] = useState(1);
+  return (
+    <Card>
+      <Seg label="Earbud" options={EARS.map((e) => ({ value: e.ear, label: `${e.label} earbud` }))} value={ear} onChange={setEar} />
+      {k.tapCounts.map((taps) => {
+        const fn = k.fnOf(ear, taps);
+        return (
+          <Press
+            key={taps}
+            scale={0.98}
+            accessibilityRole="button"
+            accessibilityLabel={actionLabel(k, ear, taps)}
+            onPress={(ev) => fn !== undefined && k.pick(ear, taps, ev.currentTarget)}
+            style={[s.bigTile, { backgroundColor: c.well }]}
+          >
+            <View style={[s.bigIcon, { backgroundColor: c.signalFill }]}>{fn !== undefined && <FnGlyph fn={fn} on color={c.onSignal} size={24} />}</View>
+            <View style={s.grow}>
+              <Text style={[s.bigName, { color: c.ink }, k.isSaving(ear, taps) && s.saving]}>{actionText(k, ear, taps)}</Text>
+              <Txt v="sub">{gesture(taps)}</Txt>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={c.ink2} />
+          </Press>
+        );
+      })}
+    </Card>
+  );
+}
+
 /** Wear detection, where the earbuds have it. */
 export function WearRow({ b, first }: { b: BudPilot; first?: boolean }) {
   const on = b.state?.wearDetection;
   if (on === undefined) return null;
-  return <ToggleRow first={first} title="Wear detection" detail="Senses when they're in your ears" value={on} onChange={(v) => void b.run((e) => e.setWearDetection(v))()} />;
+  return <ToggleRow first={first} icon="ear-outline" title="Wear detection" detail="Senses when they're in your ears" value={on} onChange={(v) => void b.run((e) => e.setWearDetection(v))()} />;
 }
 
-/** What the earbuds do that can't be changed: press and hold, and calls. */
+const FACTS: { icon: ComponentProps<typeof Ionicons>["name"]; k: string; v: string }[] = [
+  { icon: "hand-left-outline", k: "Press and hold", v: "Off → ANC → Transparency" },
+  { icon: "call-outline", k: "Incoming call", v: "Tap answers" },
+  { icon: "close-circle-outline", k: "During a call", v: "Double tap hangs up" },
+];
+
+/** What the earbuds do that can't be changed: press and hold, and calls; each with its icon. */
 export function TouchFacts() {
+  const c = useColors();
   return (
-    <>
-      <KV k="Press and hold" v="Off → ANC → Transparency" />
-      <KV k="Incoming call" v="Tap answers" />
-      <KV k="During a call" v="Double tap hangs up" />
-    </>
+    <View style={s.facts}>
+      {FACTS.map((f) => (
+        <View key={f.k} style={s.fact}>
+          <View style={[s.factIcon, { backgroundColor: c.well }]}>
+            <Ionicons name={f.icon} size={18} color={c.ink2} />
+          </View>
+          <View style={s.grow}>
+            <Txt v="strong">{f.k}</Txt>
+            <Txt v="sub">{f.v}</Txt>
+          </View>
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -815,8 +890,9 @@ export function AccentPicker() {
         {ACCENTS.map((a) => {
           const on = a.key === chosen.key;
           return (
-            <Pressable
+            <Press
               key={a.key}
+              scale={0.86} // answers the finger at once; the new colours take a moment to reach every screen
               accessibilityRole="radio"
               accessibilityState={{ selected: on }}
               accessibilityLabel={a.name}
@@ -828,7 +904,7 @@ export function AccentPicker() {
               style={[s.swatch, { backgroundColor: hsl(a.h, a.s, a.fill ?? 50), borderColor: on ? c.ink : "transparent", alignItems: "center", justifyContent: "center" }]}
             >
               {on && <Ionicons name="checkmark" size={18} color={a.darkText ? "#12151C" : "#FFFFFF"} />}
-            </Pressable>
+            </Press>
           );
         })}
       </View>
@@ -884,7 +960,10 @@ export function AppContent({ b, onTour, onFirstRun }: { b: BudPilot; onTour?: ()
       {keeperAvailable() && <BackgroundCard />}
       {keeperAvailable() && <LogCard />}
       <Card>
-        <CardHead title={`Shono ${appConfig.expo.version}`} />
+        <View style={s.about}>
+          <Lockup size={36} />
+          <Txt v="sub">Version {appConfig.expo.version}</Txt>
+        </View>
         <Txt v="sub">
           Made by <Text style={{ color: c.ink, fontFamily: F.semibold }}>{CREDIT_NAME}</Text>
         </Txt>
@@ -915,21 +994,40 @@ const s = StyleSheet.create({
   two: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
   row: { flexDirection: "row", alignItems: "center", gap: 12 },
   inline: { flexDirection: "row", alignItems: "center", gap: 8 },
+  about: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  actSlot: { height: 44, marginTop: 2 }, // a button's height: the space it saves went to the curve
+  acts: { flexDirection: "row", gap: 8 },
+  act: { height: 44, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+  actGrow: { flex: 1, paddingHorizontal: 8 },
+  actOff: { opacity: 0.4 },
+  actIcon: { width: 48 },
   lede: { fontSize: 14, marginTop: -4, marginBottom: 4, paddingHorizontal: 4 },
-  field: { height: 150, borderRadius: 22, borderWidth: StyleSheet.hairlineWidth, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  fieldCap: { position: "absolute", right: 16, bottom: 12 },
+  field: { height: 184, paddingTop: 4, borderRadius: 22, borderWidth: StyleSheet.hairlineWidth, alignItems: "center", overflow: "hidden" }, // the art at the top, the mode's name under it
+  fieldCap: { position: "absolute", left: 18, bottom: 14 },
+  fieldMode: { fontFamily: F.display, fontSize: 20, lineHeight: 24 },
+  glow: { position: "absolute", left: 166, top: 0, width: 140, height: 140, borderRadius: 70 },
+  gameName: { gap: 6 },
   wave: { position: "absolute", left: 189, top: 44 },
   tiles: { flexDirection: "row", gap: 8 },
   tile: { flex: 1, minWidth: 0, borderRadius: 20, borderWidth: 1.5, padding: 10, paddingTop: 14, gap: 6, minHeight: 126 },
   tick: { position: "absolute", top: 10, right: 10, width: 20, height: 20, borderRadius: 10, alignItems: "center", justifyContent: "center" },
-  note: { flexDirection: "row", gap: 8, alignItems: "flex-start", paddingHorizontal: 4 },
+  // the hint and the stepper share one fixed height: neither changes the card's size
+  note: { flexDirection: "row", gap: 8, alignItems: "flex-start", paddingHorizontal: 4, height: 44 },
+  stepper: { flexDirection: "row", alignItems: "center", gap: 12, height: 44 },
+  stepBtn: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
+  stepMid: { flex: 1, alignItems: "center" },
   form: { gap: 6, paddingBottom: 4 },
   input: { height: 50, borderRadius: 14, paddingHorizontal: 14 },
   btns: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   glyphBig: { width: 52, height: 52, borderRadius: 16, alignItems: "center", justifyContent: "center" },
-  glyphSmall: { width: 34, height: 34, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   turbo: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", height: 28, paddingHorizontal: 10, borderRadius: 14 },
-  gest: { flexDirection: "row", alignItems: "center", gap: 14, minHeight: 60, paddingHorizontal: 6 },
+  bigTile: { flexDirection: "row", alignItems: "center", gap: 14, minHeight: 76, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
+  bigIcon: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center" },
+  bigName: { fontFamily: F.display, fontSize: 17, lineHeight: 22 },
+  saving: { opacity: 0.6 },
+  facts: { gap: 12 },
+  fact: { flexDirection: "row", alignItems: "center", gap: 12 },
+  factIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   fns: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingBottom: 6 },
   popTitle: { paddingHorizontal: 12, paddingTop: 4, paddingBottom: 6 },
   small: { height: 28, paddingHorizontal: 14, borderRadius: 14, alignItems: "center", justifyContent: "center" }, // the heading's own height: the card never grows

@@ -37,6 +37,13 @@ object LastSeen {
   /** Whether the keeper should carry the location type: Android refuses it without the permission. */
   fun wanted(context: Context) = enabled(context) && hasPermission(context)
 
+  /** Whether the phone's Location switch is on: while it's off, no place can be read. */
+  fun locationOn(context: Context): Boolean {
+    val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return false
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) return lm.isLocationEnabled
+    return runCatching { lm.isProviderEnabled(LocationManager.GPS_PROVIDER) || lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) }.getOrDefault(false)
+  }
+
   fun isEarbuds(context: Context, address: String?) = address != null && address.equals(prefs(context).getString("address", null), ignoreCase = true)
 
   fun read(context: Context): Map<String, Any>? {

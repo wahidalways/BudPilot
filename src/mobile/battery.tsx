@@ -35,7 +35,8 @@ const RISE_MS = 780;
 const STEP_MS = 70; // left, case and right fill one after another
 const EASE = Easing.out(Easing.cubic);
 
-function useAppActive() {
+/** Whether Shono is the app in front (looping animations rest while it isn't). */
+export function useAppActive() {
   const [on, setOn] = useState(AppState.currentState === "active");
   useEffect(() => {
     const sub = AppState.addEventListener("change", (s) => setOn(s === "active"));

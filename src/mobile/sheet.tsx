@@ -29,12 +29,12 @@ export function Sheet({
   const c = useColors();
   const insets = useSafeAreaInsets();
   const reduce = useReducedMotion();
-  const [visible, setVisible] = useState(isOpen); // stays true while it closes
-  const [wasOpen, setWasOpen] = useState(isOpen);
-  if (isOpen !== wasOpen) {
-    setWasOpen(isOpen);
-    if (isOpen) setVisible(true);
-  }
+  // on screen while open, and kept while it slides away. Shown from `isOpen` itself: React can drop a set made while
+  // rendering when the same state has a waiting update (the closed sheet's timer leaves one), which hid "Save as…"
+  // one frame after it opened
+  const [kept, setKept] = useState(isOpen);
+  if (isOpen && !kept) setKept(true);
+  const visible = isOpen || kept;
   const [h, setH] = useState(600);
   const open = useSharedValue(0);
   const drag = useSharedValue(0);
@@ -48,7 +48,7 @@ export function Sheet({
         : withTiming(0, { duration: reduce ? 1 : 190, easing: Easing.in(Easing.cubic) }),
     );
     if (!isOpen) {
-      const t = setTimeout(() => setVisible(false), 260);
+      const t = setTimeout(() => setKept(false), 260);
       return () => clearTimeout(t);
     }
   }, [isOpen, reduce, open, drag]);
@@ -121,8 +121,9 @@ export function Popover({ anchor, label, onClose, width = 264, children }: { anc
   const c = useColors();
   const reduce = useReducedMotion();
   const { width: W, height: H } = useWindowDimensions();
-  const [shown, setShown] = useState(anchor); // the last place, kept while it closes
-  if (anchor && anchor !== shown) setShown(anchor);
+  const [kept, setKept] = useState(anchor); // the last place, kept while it closes
+  if (anchor && anchor !== kept) setKept(anchor);
+  const shown = anchor ?? kept; // from `anchor` itself while open (see Sheet: a set made while rendering can be dropped)
   const open = !!anchor;
   const root = useRef<ComponentRef<typeof View>>(null);
   const [origin, setOrigin] = useState<{ x: number; y: number }>();
@@ -131,7 +132,7 @@ export function Popover({ anchor, label, onClose, width = 264, children }: { anc
   useEffect(() => {
     p.set(reduce ? (open ? 1 : 0) : open ? withSpring(1, { dampingRatio: 0.82, duration: 280 }) : withTiming(0, { duration: 130 }));
     if (open) return;
-    const t = setTimeout(() => setShown(undefined), reduce ? 0 : 150);
+    const t = setTimeout(() => setKept(undefined), reduce ? 0 : 150);
     return () => clearTimeout(t);
   }, [open, reduce, p]);
   const grow = useAnimatedStyle(() => ({ opacity: p.get(), transform: [{ scale: 0.94 + p.get() * 0.06 }] }));
