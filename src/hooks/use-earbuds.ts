@@ -7,6 +7,7 @@ import { desktop } from "@/hooks/use-desktop";
 import type { Transport } from "@/jieli/client";
 import { Earbuds, type EarbudsState, noiseModeMask, storedAncLevel, withEq } from "@/jieli/earbuds";
 import { addCorrection, type Correction } from "@/utils/corrections";
+import { holdsWhenSoundLeaves, READ_MS, readEvery, retryWait } from "@/utils/connection";
 import { atSwitchOn, byPressAndHold, cameOnAbove, caseChanged } from "@/utils/noise-switch";
 import { later, sleep } from "@/utils/later";
 import { loadPref, savePref } from "@/utils/prefs";
@@ -22,13 +23,8 @@ export type NoisePref = { mode: number; ncLevel: number; adaptive: boolean };
  * I want the strength as low, always"). The strength can still change while it's on; the next switch-on is Low again. */
 export const ancOn = (): NoisePref => ({ mode: 1, ncLevel: HOCO_EQ35.ancLevels[0].level, adaptive: false });
 
-const REFRESH_MS = 3000;
-// in the background on Android: the earbuds announce their own changes, so the read is only a safety net, and a slower
-// one saves both batteries
-const BG_REFRESH_MS = 30_000;
 const VOLUME_MS = 500; // the volume alone, more often, while volume taps are on: a tap should show in Windows right away
 const RECONNECT_MS = 1000; // the earbuds switch ANC on ~3 s after power-up, so be connected before that
-const RETRY_MS = 1500; // a failed try while the earbuds play on this phone: the next one this soon, not at the next 5 s tick
 const NOISE_KEY = "budpilot.noise";
 const STUCK_MS = 30_000; // an attempt this old has hung (Bluetooth can stall); allow a new one
 const REUSE_MS = 20_000; // after a drop, reconnect straight to the same earbuds this long; then scan for them afresh
@@ -87,6 +83,13 @@ export function useEarbuds() {
   const connecting = useRef(false); // one connection attempt at a time
   const relinking = useRef(false); // the loop after a drop is trying the same earbuds
   const retry = useRef<() => void>(undefined); // cancels a quick retry that's waiting
+  const fails = useRef(0); // automatic tries in a row that failed (Android backs off, see retryWait); their sound
+  // arriving, or Shono coming to the front, tries at once
+  const notBefore = useRef(0); // no automatic try before this
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (st) => st === "active" && void (notBefore.current = 0));
+    return () => sub.remove();
+  }, []);
   // after Disconnect, Shono stops connecting by itself until Connect or its next start: never saved, so it can't
   // get stuck off (the user wants it connected whenever the earbuds are)
   const paused = useRef(false);
@@ -220,6 +223,7 @@ export function useEarbuds() {
         link.current = undefined;
         poll.current?.();
         buds.current = undefined;
+        manual.current = false; // the user's Connect ends with its link: the relinks below follow the sound again
         droppedAt.current = Date.now();
         log(`link lost after ${secs(droppedAt.current - connectedAt.current)}; last from the earbuds: ${recent?.join(" | ") || "nothing"}`);
         if (!wanted.current) return setStatus("idle");
@@ -262,6 +266,7 @@ export function useEarbuds() {
       setStatus("connected");
       connectedAt.current = Date.now();
       lastFail.current = "";
+      fails.current = 0;
       log(`connected (${how})${droppedAt.current ? `, ${secs(connectedAt.current - droppedAt.current)} after the last drop` : ""}: ${batteryText(e.state.battery)}`);
       if (__DEV__) (globalThis as { __earbuds?: Earbuds }).__earbuds = e; // inspect from DevTools
       // a new link counts as ANC switching on: the earbuds were in the case or out of reach, so ANC starts at Low
@@ -288,7 +293,7 @@ export function useEarbuds() {
       const tick = () => {
         if (buds.current !== e) return;
         const background = Platform.OS === "android" && AppState.currentState !== "active";
-        const fullEvery = background ? BG_REFRESH_MS : REFRESH_MS;
+        const fullEvery = readEvery(background, misses);
         const step = volumeWatch.current ? VOLUME_MS : fullEvery;
         const wake = pausedUntil.current - Date.now();
         poll.current = later(tick, wake > 0 ? Math.min(step, wake + 50) : step);
@@ -311,7 +316,7 @@ export function useEarbuds() {
           })
           .finally(() => (refreshing = false));
       };
-      poll.current = later(tick, volumeWatch.current ? VOLUME_MS : REFRESH_MS);
+      poll.current = later(tick, volumeWatch.current ? VOLUME_MS : READ_MS);
     },
     [enqueue, restoreIfDrifted, putBack, noteFail, keepChoice],
   );
@@ -329,19 +334,24 @@ export function useEarbuds() {
       setStatus(auto ? "reconnecting" : "connecting");
       wanted.current = true;
       paused.current = false;
-      manual.current = !auto;
+      manual.current = holdsWhenSoundLeaves(auto, soundHere.current);
       try {
-        await startSession(await connectEarbuds());
+        // only the user's own Connect asks for Bluetooth access: an automatic try popped Android's question up by itself
+        await startSession(await connectEarbuds({ ask: !auto }));
       } catch (e) {
         noteFail(e);
         if (auto) {
           if (wanted.current) setStatus("reconnecting"); // a Disconnect meanwhile stays a Disconnect
-          // the earbuds play on this phone, so they're on and near: try again soon (the earbuds' Bluetooth LE side
-          // can take a few seconds longer than their sound after leaving the case). Not on Windows: a scan there
-          // needs the user gesture the shell's own tick carries
-          if (Platform.OS === "android" && wanted.current && soundHere.current === true) {
-            retry.current?.();
-            retry.current = later(() => (globalThis as { __budpilotAutoConnect?: () => void }).__budpilotAutoConnect?.(), RETRY_MS);
+          if (Platform.OS === "android") {
+            const wait = retryWait(fails.current++);
+            notBefore.current = Date.now() + wait;
+            // the earbuds play on this phone, so they're on and near: try again (the earbuds' Bluetooth LE side can take
+            // a few seconds longer than their sound after leaving the case). Not on Windows: a scan there needs the
+            // user gesture the shell's own tick carries
+            if (wanted.current && soundHere.current === true) {
+              retry.current?.();
+              retry.current = later(() => (globalThis as { __budpilotAutoConnect?: () => void }).__budpilotAutoConnect?.(), wait);
+            }
           }
         } else {
           wanted.current = false;
@@ -360,7 +370,7 @@ export function useEarbuds() {
   useEffect(() => {
     (globalThis as { __budpilotAutoConnect?: () => void }).__budpilotAutoConnect = () => {
       if (connecting.current && Date.now() - connectingSince.current > STUCK_MS) connecting.current = false; // a hung attempt
-      if (paused.current || buds.current || connecting.current || soundHere.current === false) return;
+      if (paused.current || buds.current || connecting.current || soundHere.current === false || Date.now() < notBefore.current) return;
       // in the background on Android, only when the earbuds play on this phone: no endless scans while that's unknown
       if (Platform.OS === "android" && AppState.currentState !== "active" && soundHere.current !== true) return;
       // right after a drop the loop above tries the same earbuds; once it has stopped (their sound left, then came
@@ -376,6 +386,8 @@ export function useEarbuds() {
   useEffect(() => {
     soundHere.current = pcLinked;
     if (pcLinked === true) {
+      fails.current = 0; // their sound just arrived: they're on and near, so try now and quickly again
+      notBefore.current = 0;
       if (wanted.current && !paused.current && !buds.current && !connecting.current) void connect({ auto: true });
       return;
     }

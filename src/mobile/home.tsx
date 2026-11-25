@@ -1,6 +1,6 @@
 // The earbuds at a glance: the phone's Home tab, and the earbuds pane beside the pages on a tablet.
 import { type ComponentProps, type ComponentRef, type RefObject, use, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, { Easing, FadeIn, FadeOut, useAnimatedStyle, useReducedMotion, useSharedValue, withTiming } from "react-native-reanimated";
 
 import { usingSample } from "@/ble/connect";
@@ -115,7 +115,8 @@ export function DeviceCard({ b, photos = 1, fill }: { b: BudPilot; photos?: numb
           </Txt>
         </View>
         <View style={[s.statusPill, { backgroundColor: c.well }]}>
-          {b.status === "connecting" ? <ActivityIndicator size={12} color={c.ink2} /> : <View style={[s.dot, { backgroundColor: live ? c.ok : c.ink2 }]} />}
+          {/* a still dot, also while connecting: a spinner kept the blur over it redrawing for the whole try (up to ~24 s) */}
+          <View style={[s.dot, { backgroundColor: live ? c.ok : c.ink2 }]} />
           <Txt v="small" numberOfLines={1} style={{ color: live ? c.ok : c.ink2 }}>
             {status}
           </Txt>
@@ -154,8 +155,8 @@ export function DeviceCard({ b, photos = 1, fill }: { b: BudPilot; photos?: numb
 }
 
 /** The earbuds card while they aren't connected (the user's pick, "C · Radar"): the case, still, with rings spreading
- * from behind it while Shono looks for them. The rings rest when it isn't looking, when this page is out of sight or
- * covered, and while Shono is in the background. */
+ * from behind it while Shono looks for them: four spreads (~10 s), then still, since a look can last for hours with
+ * the earbuds away. They play again when Home is shown again or Shono comes back to the front. */
 function Radar({ looking, k = 1 }: { looking: boolean; k?: number }) {
   const c = useColors();
   const page = use(PageActive);
@@ -164,7 +165,7 @@ function Radar({ looking, k = 1 }: { looking: boolean; k?: number }) {
   return (
     <View style={[s.radar, { height: 136 * k }]}>
       {[0, 800, 1600].map((delay) => (
-        <Ring key={delay} on={on} delay={delay} color={c.signal} size={76 * k} reach={1.6} ms={2400} />
+        <Ring key={delay} on={on} delay={delay} color={c.signal} size={76 * k} reach={1.6} ms={2400} times={4} />
       ))}
       <Image source={PHOTOS.case} resizeMode="contain" style={{ width: 92 * k, height: 92 * k, opacity: looking ? 1 : 0.55 }} />
     </View>

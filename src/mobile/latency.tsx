@@ -24,6 +24,15 @@ export function LatencyCheck({ gameOn }: { gameOn: boolean }) {
   const tap = useRef<() => void>(undefined);
   // music playing meanwhile dips for a beep instead of stopping
   useEffect(() => void setAudioModeAsync({ interruptionMode: "duckOthers" }).catch(() => {}), []);
+  // closed mid-check (a tablet's Game card folded, the tablet turned): the check stops, since the beep's player is gone
+  const gone = useRef(false);
+  useEffect(() => {
+    gone.current = false;
+    return () => {
+      gone.current = true;
+      tap.current?.(); // ends a wait for a tap
+    };
+  }, []);
 
   const start = async () => {
     const mode = gameOn ? "game" : "normal";
@@ -32,6 +41,7 @@ export function LatencyCheck({ gameOn }: { gameOn: boolean }) {
       for (let i = 1; i <= BEEPS; i++) {
         setBeep(i);
         await sleep(1200 + Math.random() * 1300); // a random gap, so taps can't be timed by rhythm
+        if (gone.current) return;
         await player.seekTo(0);
         player.play();
         const playedAt = performance.now();
@@ -43,6 +53,7 @@ export function LatencyCheck({ gameOn }: { gameOn: boolean }) {
           };
         });
         tap.current = undefined;
+        if (gone.current) return;
         samples.push(tappedAt - playedAt);
       }
     } finally {

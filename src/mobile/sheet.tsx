@@ -1,4 +1,4 @@
-import { type ComponentRef, type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
+import { type ComponentRef, memo, type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 import { Modal, PanResponder, Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
 import Animated, { Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withSpring, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -8,6 +8,15 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { useColors } from "@/theme";
 
 import { Txt } from "./kit";
+
+/** A sheet's title and content as they last were while open, kept while it slides away: callers clear the state they
+ * come from on closing, so a Delete read `Delete “”?` on its way down and a Rename turned into "Save EQ". */
+const Held = memo(
+  function Held({ children }: { open: boolean; children: ReactNode }) {
+    return children;
+  },
+  (_, next) => !next.open,
+);
 
 /** A bottom sheet on phones (drag it down, tap outside or press Back to close) and a centred dialog on tablets. Declared
  * where it's used, so its content is always current; it stays on screen while it slides away. */
@@ -95,16 +104,20 @@ export function Sheet({
       >
         <View {...(tablet ? {} : pan.panHandlers)} style={s.grabZone}>
           {!tablet && <View style={[s.grabber, { backgroundColor: c.line }]} />}
-          <Txt v="name" style={s.title} accessibilityRole="header">
-            {title}
-          </Txt>
-          {sub ? (
-            <Txt v="sub" style={s.sub}>
-              {sub}
+          <Held open={isOpen}>
+            <Txt v="name" style={s.title} accessibilityRole="header">
+              {title}
             </Txt>
-          ) : null}
+            {sub ? (
+              <Txt v="sub" style={s.sub}>
+                {sub}
+              </Txt>
+            ) : null}
+          </Held>
         </View>
-        <View style={s.body}>{children}</View>
+        <View style={s.body}>
+          <Held open={isOpen}>{children}</Held>
+        </View>
       </Animated.View>
       </View>
     </Modal>

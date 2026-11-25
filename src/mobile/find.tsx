@@ -2,7 +2,7 @@
 // with the bytes hoco.music sends (Earbuds.findSound); and Last seen: where the phone was when the earbuds last
 // disconnected, read once at that moment by the native side (modules/shono-keeper/LastSeen.kt) and kept on this phone.
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { use, useEffect, useState, useSyncExternalStore } from "react";
 import { AppState, Image, Linking, PermissionsAndroid, Platform, StyleSheet, Text, View } from "react-native";
 import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withTiming } from "react-native-reanimated";
 
@@ -13,7 +13,8 @@ import { loadPref, savePref } from "@/utils/prefs";
 
 import { getLastSeen, type LastSeenPlace, locationOn, onLastSeen, setLastSeen } from "../../modules/shono-keeper";
 import { PHOTOS } from "./art";
-import { useGlass, useSurface } from "./glass";
+import { useAppActive } from "./battery";
+import { PageActive, useGlass, useSurface } from "./glass";
 import { Button, Card, CardHead, Press, T, tick, ToggleRow, Txt } from "./kit";
 import { Sheet } from "./sheet";
 
@@ -187,15 +188,19 @@ function EarTile({ label, photo, playing, onPress }: { label: string; photo: num
 
 /** A ring that spreads out and fades, again and again while `on` (with motion allowed): the sound playing here, and
  * Home's radar while Shono looks for the earbuds. `size` its diameter at rest, `reach` how much further it spreads, `ms`
- * one spread. */
-export function Ring({ on, delay, color, size = 76, reach = 1.1, ms = 1600 }: { on: boolean; delay: number; color: string; size?: number; reach?: number; ms?: number }) {
+ * one spread, `times` how many (-1: until `on` ends; it ends faded out). They rest while their page is out of sight or
+ * covered and while Shono is in the background: a find sound left playing kept them looping behind Home for a minute. */
+export function Ring({ on: wanted, delay, color, size = 76, reach = 1.1, ms = 1600, times = -1 }: { on: boolean; delay: number; color: string; size?: number; reach?: number; ms?: number; times?: number }) {
   const { motion } = useGlass();
+  const page = use(PageActive);
+  const app = useAppActive();
+  const on = wanted && page && app;
   const p = useSharedValue(0);
   useEffect(() => {
     cancelAnimation(p);
     p.set(0);
-    if (on && motion) p.set(withDelay(delay, withRepeat(withTiming(1, { duration: ms, easing: Easing.out(Easing.cubic) }), -1)));
-  }, [on, motion, delay, ms, p]);
+    if (on && motion) p.set(withDelay(delay, withRepeat(withTiming(1, { duration: ms, easing: Easing.out(Easing.cubic) }), times)));
+  }, [on, motion, delay, ms, times, p]);
   const a = useAnimatedStyle(() => ({ opacity: on ? (1 - p.get()) * 0.7 : 0, transform: [{ scale: 0.5 + p.get() * reach }] }));
   return <Animated.View pointerEvents="none" style={[s.ring, { borderColor: color, width: size, height: size, borderRadius: size / 2 }, a]} />;
 }
