@@ -144,15 +144,16 @@ async function find(BleManager: Ble): Promise<string> {
 }
 
 /** Finds the earbuds over Bluetooth LE and opens the JieLi channel.
- * `reuse` reconnects to the earbuds found before, e.g. after they went back in the case. */
-export async function connectEarbuds({ reuse = false } = {}): Promise<Transport> {
+ * `reuse` reconnects to the earbuds found before, e.g. after they went back in the case. `ask`: Android's question
+ * for Bluetooth access may show (the user tapped Connect); otherwise a missing access just fails the try. */
+export async function connectEarbuds({ reuse = false, ask = false } = {}): Promise<Transport> {
   if (NO_BLUETOOTH) {
     known = "sample";
     await new Promise((r) => setTimeout(r, 700)); // like finding real ones
     return sampleTransport();
   }
   const BleManager = await startBle();
-  if ((await requestBluetoothAccess()) !== "granted")
+  if (!(ask ? (await requestBluetoothAccess()) === "granted" : await hasBluetoothAccess()))
     throw new Error(needsLocation() ? "Shono needs location access to look for your earbuds." : "Shono needs Nearby devices access to reach your earbuds.");
   if ((await BleManager.checkState()) !== "on") throw new Error("Bluetooth is off. Turn it on to reach your earbuds.");
   // give up on an attempt after a while, like on Windows: a pending connect can sit on earbuds that went away

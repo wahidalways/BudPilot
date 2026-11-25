@@ -45,7 +45,12 @@ export function useAppActive() {
   return on;
 }
 
-/** A value that loops while `on` (0 → 1, `ms` each way; `back`: and back down), and rests at `rest` otherwise. */
+// a loop plays this many runs, then rests (even, so a back-and-forth one ends where it started): an endless one redrew
+// the card and the blur over it on every frame for as long as the earbuds charged on screen, and warmed the phone
+const RUNS = 6;
+
+/** A value that loops while `on` (0 → 1, `ms` each way; `back`: and back down) for RUNS runs, and rests at `rest`
+ * otherwise. It plays again each time `on` comes back (Home shown again, Shono back in front). */
 function useLoop(on: boolean, ms: number, back: boolean, rest: number) {
   const v = useSharedValue(rest);
   useEffect(() => {
@@ -55,7 +60,7 @@ function useLoop(on: boolean, ms: number, back: boolean, rest: number) {
       return;
     }
     v.set(0);
-    v.set(withRepeat(withTiming(1, { duration: ms, easing: back ? Easing.inOut(Easing.sin) : Easing.linear }), -1, back));
+    v.set(withRepeat(withTiming(1, { duration: ms, easing: back ? Easing.inOut(Easing.sin) : Easing.linear }), RUNS, back)); // the flow's light ends past the bar's edge
   }, [on, ms, back, rest, v]);
   return v;
 }
@@ -80,17 +85,21 @@ export function BatteryLevel({ kind, live, percent, charging, order }: { kind: B
 
   // the level as 0..1: from empty, it rises in turn and the number counts up with it; after that it eases to changes
   const v = useSharedValue(0);
+  const goal = useSharedValue(0); // the level it's heading to, as a whole percent
   useEffect(() => {
     const to = live ? percent / 100 : 0;
+    goal.set(Math.round(to * 100));
     if (!motion) return void v.set(to);
     const fromEmpty = v.get() === 0;
     v.set(withDelay(fromEmpty ? order * STEP_MS : 0, withTiming(to, { duration: fromEmpty ? RISE_MS : 380, easing: EASE })));
-  }, [live, percent, motion, order, v]);
+  }, [live, percent, motion, order, v, goal]);
   const [shown, setShown] = useState(0);
+  // the number counts in steps of 5, then lands on the level: every 1% was ~80 renders per battery in under a second,
+  // right while Shono was busy with the handshake and the put-back
   useAnimatedReaction(
     () => Math.round(v.get() * 100),
     (n, before) => {
-      if (n !== before) scheduleOnRN(setShown, n);
+      if (n !== before && (n === goal.get() || before === null || Math.floor(n / 5) !== Math.floor(before / 5))) scheduleOnRN(setShown, n);
     },
   );
 

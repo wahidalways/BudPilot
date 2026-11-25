@@ -16,8 +16,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.content.res.Resources
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
@@ -31,30 +33,14 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.math.abs
 
-/** Asks for the display's fastest refresh rate at the current resolution (from Muse). Android may still cap it for
- * battery saver, heat, or a 60 Hz choice in the phone's display settings. */
-private fun preferFastestRefreshRate(activity: Activity) {
-  activity.runOnUiThread { runCatching { applyFastestRefreshRate(activity) } } // window settings belong to the UI thread
-}
-
-private fun applyFastestRefreshRate(activity: Activity) {
-  // some mode switches blank the screen for a moment; Android 12 is the first to say which ones don't
-  if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-  val window = activity.window ?: return
-  val display = activity.display ?: return
-  val current = display.mode
-  val fastest = display.supportedModes
-    .filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
-    .maxByOrNull { it.refreshRate } ?: return
-  val seamless = fastest.modeId == current.modeId || current.alternativeRefreshRates.any { abs(it - fastest.refreshRate) < 0.1f }
-  if (!seamless) return
-  val attributes = window.attributes
-  if (attributes.preferredDisplayModeId != fastest.modeId) {
-    attributes.preferredDisplayModeId = fastest.modeId
-    window.attributes = attributes
-  }
+/** Phones stay upright (app.json); tablets turn with the device, so held sideways they get the Dashboard instead of an
+ * upright strip with bars on both sides (Android letterboxes upright-only apps on big screens). The display's own
+ * smallest width, not the window's: a letterboxed window is narrower than 600 dp even on a tablet. */
+private fun turnOnTablets(activity: Activity) {
+  val tablet = Resources.getSystem().configuration.smallestScreenWidthDp >= 600 // the app's own phone/tablet line (shell.tsx)
+  val wanted = if (tablet) ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+  activity.runOnUiThread { if (activity.requestedOrientation != wanted) activity.requestedOrientation = wanted }
 }
 
 /**
@@ -78,6 +64,7 @@ class ShonoKeeperModule : Module() {
 
   // Game mode › Turn on with games: which app is in front, looked at every few seconds while it's on
   private var front: String? = null
+  private var looked = 0L // when the usage events were last read
   private var gamePlaying: Boolean? = null
   private val gameLook: Runnable = object : Runnable {
     override fun run() {
@@ -109,11 +96,11 @@ class ShonoKeeperModule : Module() {
       soundWatch = null
       volumeWatch = null
     }
-    // Many 90/120 Hz phones keep apps they don't know at 60 Hz, which halves the frames of every scroll and animation:
-    // each time Shono comes to the front (also on launch), it asks for the screen's fastest rate
+    // Shono no longer asks for the screen's fastest refresh rate: 120 Hz doubled the drawing (and the blur under the
+    // bars) on every animation frame and warmed the phone (the user, 2026-11-25). Android picks the rate again.
     OnActivityEntersForeground {
       note("Shono in front, ${phoneVolume()}")
-      appContext.currentActivity?.let(::preferFastestRefreshRate)
+      appContext.currentActivity?.let(::turnOnTablets)
     }
     OnActivityEntersBackground { note("Shono in the background, ${phoneVolume()}") }
 
@@ -157,6 +144,7 @@ class ShonoKeeperModule : Module() {
     Function("watchGames") { on: Boolean ->
       timers.removeCallbacks(gameLook)
       gamePlaying = null
+      looked = 0L // a new watch starts from the last 10 s
       if (on) timers.post(gameLook)
     }
 
@@ -316,16 +304,23 @@ class ShonoKeeperModule : Module() {
   }
 
   /** Whether the app in front is a game: the last app brought to the front (Android's usage events), by the category
-   * it declares. Kept between looks, so a still screen keeps the last answer. */
+   * it declares. Kept between looks, so a still screen keeps the last answer; the screen going off or locking counts
+   * as no app in front (a game left in front at power-off kept Game mode on all night), and unlocking back into the
+   * game brings it to the front again. Each look reads the events since the one before: a phone asleep for longer than
+   * the old 10 s window missed the screen going off. */
   private fun gameInFront(context: Context): Boolean {
     val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return false
     val now = System.currentTimeMillis()
-    val events = usm.queryEvents(now - 10_000, now)
+    val events = usm.queryEvents(if (looked > 0) looked - 1000 else now - 10_000, now)
+    looked = now
     val e = UsageEvents.Event()
     while (events.hasNextEvent()) {
       events.getNextEvent(e)
       @Suppress("DEPRECATION") // ACTIVITY_RESUMED on Android 10+, the same value
-      if (e.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) front = e.packageName
+      when (e.eventType) {
+        UsageEvents.Event.MOVE_TO_FOREGROUND -> front = e.packageName
+        SCREEN_NON_INTERACTIVE, KEYGUARD_SHOWN -> front = null
+      }
     }
     val pkg = front ?: return false
     if (pkg == context.packageName) return false
@@ -346,6 +341,9 @@ class ShonoKeeperModule : Module() {
 
   companion object {
     private const val GAME_LOOK_MS = 4000L // how often Turn on with games looks at the app in front
+    // UsageEvents.Event's screen-off and lock-screen events (Android 9+; older ones never send them)
+    private const val SCREEN_NON_INTERACTIVE = 16
+    private const val KEYGUARD_SHOWN = 17
 
     // the system's volume broadcast (not in the public SDK, but sent on every volume change)
     private const val VOLUME_CHANGED = "android.media.VOLUME_CHANGED_ACTION"

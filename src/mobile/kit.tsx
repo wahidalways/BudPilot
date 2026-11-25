@@ -401,7 +401,7 @@ export function ScrollRow({ children, edge = 16, label }: { children: ReactNode;
   }, [chosen, laid, w]);
   const after = content - w - x > 4;
   const before = x > 4;
-  const by = (dir: number) => row.current?.scrollTo({ x: Math.max(0, x + dir * w * 0.7), animated: true });
+  const by = (dir: number) => row.current?.scrollTo({ x: Math.max(0, scrollX.current + dir * w * 0.7), animated: true });
   // the fade ends in the card's colour (solid enough to read the arrow over it)
   const solid = c.dark ? "rgba(24, 26, 31," : "rgba(250, 251, 253,";
   const side = (dir: number) => (
@@ -421,17 +421,28 @@ export function ScrollRow({ children, edge = 16, label }: { children: ReactNode;
     </View>
   );
   return (
-    <View style={{ marginHorizontal: -edge }} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
+    <View
+      style={{ marginHorizontal: -edge }}
+      onLayout={(e) => {
+        setW(e.nativeEvent.layout.width);
+        setX(scrollX.current); // `x` may lag between the ends (below); the fades need the real place now
+      }}
+    >
       <ScrollView
         ref={row}
         horizontal
         showsHorizontalScrollIndicator={false}
         accessibilityLabel={label}
         contentContainerStyle={[s.scrollRow, { paddingHorizontal: edge }]}
-        onContentSizeChange={(cw) => setContent(cw)}
-        onScroll={(e) => {
-          scrollX.current = e.nativeEvent.contentOffset.x;
+        onContentSizeChange={(cw) => {
+          setContent(cw);
           setX(scrollX.current);
+        }}
+        onScroll={(e) => {
+          const v = (scrollX.current = e.nativeEvent.contentOffset.x);
+          // only when a fade comes or goes: setting it on every scroll event re-rendered the row and its chips ~30
+          // times a second while swiping
+          if (v > 4 !== x > 4 || content - w - v > 4 !== content - w - x > 4) setX(v);
         }}
         scrollEventThrottle={32}
       >

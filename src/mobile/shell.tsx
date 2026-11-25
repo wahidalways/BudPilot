@@ -424,7 +424,7 @@ export function MobileApp() {
   const [msg, setMsg] = useState<Note>();
   const [launching, setLaunching] = useState(true); // the loading screen, at a cold start (launch.tsx)
   const launched = useCallback(() => setLaunching(false), []);
-  useAutoConnect(onboarded);
+  useAutoConnect(onboarded && b.status !== "connected"); // after a drop the relink loop goes first (see use-earbuds)
   const keeperOn = useKeeper(b, onboarded);
   // the gear's dot: Shono keeps working in the background, but Android may pause it there ("Run without limits" off)
   const [free, setFree] = useState(backgroundUnrestricted);
@@ -490,6 +490,16 @@ export function MobileApp() {
     if (tour) setTimeout(() => setTour(tourStops()), 650);
     else setMsg({ title: "Tour skipped", sub: "Take it any time from App settings", at: Date.now() });
   };
+  // a tablet turned between upright (phone layout) and sideways (the Dashboard): the tour's stops were measured on the
+  // other layout, and an open App sheet or side panel belongs to it, so they close rather than point at nothing or pop
+  // open again on turning back
+  const [layout, setLayout] = useState(sideways);
+  if (layout !== sideways) {
+    setLayout(sideways);
+    setTour(undefined);
+    setAppOpen(false);
+    setPanel(false);
+  }
   const firstRunAgain = () => {
     setAppOpen(false);
     setPanel(false);
@@ -559,6 +569,8 @@ export function MobileApp() {
         </KeepColors>
         {sideways ? (
           <KeepColors>
+          {/* the board's loops rest while something covers it, as a page's do */}
+          <PageActive value={!panel && !limitsAsk && !tour && onboarded}>
           <View style={s.grow}>
             <TabletBar b={b} onGear={() => setPanel(true)} gearRef={navRef} attention={attention} />
             <ScrollView
@@ -568,13 +580,14 @@ export function MobileApp() {
               <DashboardBoard b={b} sideways width={board} refs={homeRefs} tablet />
             </ScrollView>
           </View>
+          </PageActive>
           </KeepColors>
         ) : (
           pages.map(([k], j) => (
             <Page
               key={k}
               active={k === cur}
-              covered={appOpen || limitsAsk || !!tour}
+              covered={appOpen || limitsAsk || !!tour || !onboarded /* the first run's screens */}
               dir={dirOf(j)}
               scrollRef={k === "home" ? homeScroll : undefined}
               title={k === "home" ? undefined : TITLES[k]}
