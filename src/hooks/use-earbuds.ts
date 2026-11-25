@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, Platform } from "react-native";
 
 import { connectEarbuds, watchSoundHere } from "@/ble/connect";
@@ -28,8 +28,10 @@ const RECONNECT_MS = 1000; // the earbuds switch ANC on ~3 s after power-up, so 
 const NOISE_KEY = "budpilot.noise";
 const STUCK_MS = 30_000; // an attempt this old has hung (Bluetooth can stall); allow a new one
 const REUSE_MS = 20_000; // after a drop, reconnect straight to the same earbuds this long; then scan for them afresh
-const RELEASE_MS = 4000; // the earbuds' sound has been elsewhere this long: let the other device have them
-const DEAD_AFTER = 4; // reads in a row without an answer: the link is dead even if Bluetooth still calls it up
+// the earbuds' sound has been elsewhere this long: let the other device have them. Also how long "Connected" stays
+// after the case closes (their sound leaves the phone first): 4 s felt slow (the user, 2026-11-25)
+const RELEASE_MS = 1000;
+const DEAD_AFTER = 3; // reads in a row without an answer: the link is dead even if Bluetooth still calls it up
 const UNDONE_MS = 5000; // the earbuds undoing a restore this fast means they won't allow it right now
 const BACKOFF_MS = 4000; // then wait this long before trying again; their resets come in short bursts
 const VERIFY_DELAY_MS = 150; // then ask the earbuds what they're in
@@ -50,6 +52,9 @@ const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
 const batteryText = (b: EarbudsState["battery"]) =>
   (["left", "right", "case"] as const).map((k) => `${k} ${b[k] ? `${b[k].percent}%${b[k].charging ? " charging" : ""}` : "gone"}`).join(", ");
 
+/** The same, apart from the volume and whether sound plays. */
+const sameButTaps = (a: EarbudsState, b: EarbudsState) => JSON.stringify({ ...a, volume: 0, playing: 0 }) === JSON.stringify({ ...b, volume: 0, playing: 0 });
+
 const drifted = (s: EarbudsState, p?: NoisePref) =>
   !!p &&
   !!s.ancGains[p.mode] &&
@@ -65,10 +70,14 @@ export function useEarbuds() {
   // the Windows app connects by itself from the start (its shell calls __budpilotAutoConnect), so it starts out waiting
   const [status, setStatus] = useState<Status>(() => (desktop() ? "reconnecting" : "idle"));
   const [state, setState] = useState<EarbudsState>();
-  // read every 3 s while connected: shows in the log whether volume taps reached the earbuds
-  useEffect(() => {
-    if (state?.volume !== undefined) log(`earbuds' volume ${state.volume}`);
-  }, [state?.volume]);
+  // The earbuds' news, for the screen. A phone shows neither their volume nor whether sound plays (only Windows turns
+  // volume taps into key presses), so on a phone a change in just those doesn't re-render the page. The volume still
+  // goes to the log (read every 3 s): it shows whether volume taps reached the earbuds.
+  const lastVolume = useRef<number>(undefined);
+  const showState = useCallback((s: EarbudsState) => {
+    if (s.volume !== undefined && s.volume !== lastVolume.current) log(`earbuds' volume ${(lastVolume.current = s.volume)}`);
+    setState((old) => (Platform.OS === "android" && old && sameButTaps(old, s) ? old : s));
+  }, []);
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(0);
   const [noisePref, setNoisePref] = useState<NoisePref | undefined>(() => loadPref<NoisePref>(NOISE_KEY));
@@ -99,8 +108,18 @@ export function useEarbuds() {
   // the earbuds' sound is on this device (Windows: its shell watches the classic link; a phone: Android's audio
   // connections); undefined until that's known
   const [pcLinked, setPcLinked] = useState<boolean>();
+  // a phone has asked Android once (its answer may still be "can't tell"): automatic connecting waits for that, or its
+  // first try at launch spent ~16 s connecting and scanning for earbuds that were in the case
+  const [soundChecked, setSoundChecked] = useState(Platform.OS !== "android");
   useEffect(() => desktop()?.onPcLink?.(setPcLinked), []);
-  useEffect(() => watchSoundHere(setPcLinked), []);
+  useEffect(
+    () =>
+      watchSoundHere((here) => {
+        setPcLinked(here);
+        setSoundChecked(true);
+      }),
+    [],
+  );
   const soundHere = useRef(pcLinked);
   const noteFail = useCallback((err: unknown) => {
     const m = message(err);
@@ -251,7 +270,7 @@ export function useEarbuds() {
           }
         })();
       });
-      const e = await Earbuds.open(t, (s) => setState(restoreIfDrifted(s))).catch(async (err) => {
+      const e = await Earbuds.open(t, (s) => showState(restoreIfDrifted(s))).catch(async (err) => {
         await t.close();
         throw err;
       });
@@ -306,7 +325,7 @@ export function useEarbuds() {
             misses = 0;
             if (!full) return;
             const shown = restoreIfDrifted(e.state); // also retries after a back-off, when nothing new arrived
-            if (shown !== e.state) setState(shown);
+            if (shown !== e.state) showState(shown);
           })
           .catch(() => {
             // Bluetooth can keep a link the earbuds stopped answering on: drop it, and the reconnect starts over
@@ -318,7 +337,7 @@ export function useEarbuds() {
       };
       poll.current = later(tick, volumeWatch.current ? VOLUME_MS : READ_MS);
     },
-    [enqueue, restoreIfDrifted, putBack, noteFail, keepChoice],
+    [enqueue, restoreIfDrifted, putBack, noteFail, keepChoice, showState],
   );
   useEffect(() => {
     session.current = startSession; // the reconnect loop calls the latest one
@@ -468,7 +487,7 @@ export function useEarbuds() {
     },
     [run],
   );
-  const shown = state && eqSending.reduce((s, w) => withEq(s, w.mode, w.gains), state);
+  const shown = useMemo(() => state && eqSending.reduce((s, w) => withEq(s, w.mode, w.gains), state), [state, eqSending]);
 
   /** "Keep my noise setting": off lets the earbuds' firmware switch modes as it likes. */
   const setKeep = useCallback((on: boolean) => {
@@ -477,5 +496,11 @@ export function useEarbuds() {
     savePref(KEEP_KEY, on);
   }, []);
 
-  return { status, state: shown, error, busy: pending > 0, connect, disconnect, run, setEq, watchVolume, noisePref, setNoise, keep, setKeep, corrections, putting, pcLinked };
+  // one object while nothing in it changes: React's compiler can't take this hook (its try/finally), and a new object on
+  // every render re-rendered the whole page on screen for anything at all, a sheet opening, a toast (the user, 2026-11-25)
+  const busy = pending > 0;
+  return useMemo(
+    () => ({ status, state: shown, error, busy, connect, disconnect, run, setEq, watchVolume, noisePref, setNoise, keep, setKeep, corrections, putting, pcLinked, soundChecked }),
+    [status, shown, error, busy, connect, disconnect, run, setEq, watchVolume, noisePref, setNoise, keep, setKeep, corrections, putting, pcLinked, soundChecked],
+  );
 }

@@ -42,6 +42,7 @@ import { Onboarding, type Rect, Tour, type TourStop } from "./onboarding";
 import { Button, GearButton, Mark, Press, TAGLINE, tick, Txt } from "./kit";
 import { AppContent, EqPage, GamePage, SoundPage, TouchPage } from "./pages";
 import { Sheet, Toast } from "./sheet";
+import { UpdateSheet, useDailyUpdateCheck } from "./update";
 
 type ViewNode = ComponentRef<typeof View>;
 type ScrollNode = ComponentRef<typeof ScrollView>;
@@ -197,7 +198,8 @@ function Page({
   });
   return (
     // its own colours: out of sight it keeps the ones it showed, and a new theme reaches it when it's shown again
-    <KeepColors live={active}>
+    // covered (App settings open over it), it takes a new theme just after the sheet does
+    <KeepColors live={active} defer={covered}>
     <Animated.View pointerEvents={active ? "auto" : "none"} accessibilityElementsHidden={!active} importantForAccessibility={active ? "auto" : "no-hide-descendants"} style={[StyleSheet.absoluteFill, move]}>
       <Animated.ScrollView
         ref={scrollRef}
@@ -403,9 +405,38 @@ function Pop({ on, children }: { on: boolean; children: ReactNode }) {
   return <Animated.View style={[s.tabIcon, a]}>{children}</Animated.View>;
 }
 
-export function MobileApp() {
+// The look's few app-wide parts, each in its own small component: when MobileApp read the theme itself, every change of
+// theme, accent, full screen, glass or battery bars re-rendered the whole app from the top.
+
+/** The status and navigation bars: hidden in Full screen, the status bar's icons light or dark with the theme. */
+function SystemBars() {
   const { c, look } = useTheme();
   const full = look.fullScreen !== false;
+  return (
+    <>
+      <StatusBar hidden={full} barStyle={c.dark ? "light-content" : "dark-content"} />
+      <NavigationBar hidden={full} />
+    </>
+  );
+}
+
+/** The app's ground colour behind everything (`children` are MobileApp's, so a new theme doesn't re-render them). */
+function Ground({ children }: { children: ReactNode }) {
+  const { c } = useTheme();
+  return <View style={[s.root, { backgroundColor: groundOf(c) }]}>{children}</View>;
+}
+
+/** What the bars blur: everything under them, on the ground colour. */
+function GroundTarget({ ref, children }: { ref: RefObject<ViewNode | null>; children: ReactNode }) {
+  const { c } = useTheme();
+  return (
+    <BlurTargetView ref={ref} style={[StyleSheet.absoluteFill, { backgroundColor: groundOf(c) }]}>
+      {children}
+    </BlurTargetView>
+  );
+}
+
+export function MobileApp() {
   const b = useBudPilot();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
@@ -424,7 +455,11 @@ export function MobileApp() {
   const [msg, setMsg] = useState<Note>();
   const [launching, setLaunching] = useState(true); // the loading screen, at a cold start (launch.tsx)
   const launched = useCallback(() => setLaunching(false), []);
-  useAutoConnect(onboarded && b.status !== "connected"); // after a drop the relink loop goes first (see use-earbuds)
+  // after a drop the relink loop goes first (see use-earbuds). Not before Android has said where the earbuds' sound is,
+  // and not while it's on another device (in the case, or playing elsewhere): their sound arriving connects at once
+  // (use-earbuds), so a try every 5 s there only woke Shono 720 times an hour
+  useAutoConnect(onboarded && b.status !== "connected" && b.soundChecked && b.pcLinked !== false);
+  useDailyUpdateCheck(onboarded && !tour);
   const keeperOn = useKeeper(b, onboarded);
   // the gear's dot: Shono keeps working in the background, but Android may pause it there ("Run without limits" off)
   const [free, setFree] = useState(backgroundUnrestricted);
@@ -443,7 +478,6 @@ export function MobileApp() {
   const navRef = useRef<ViewNode>(null); // the tab bar, or sideways the gear
   const glassTarget = useRef<ViewNode>(null); // what the bars blur: everything under them
   const barY = useSharedValue(0); // how far the page showing has scrolled
-  const ground = groundOf(c);
   const topPad = insets.top + (BAR - TITLE_H) / 2; // the page's title gap lines up with the bar's title
   // a card already in view is shown at once; otherwise it's scrolled into view first (the tour used to scroll and
   // wait half a second at every stop: the user, "it takes a second before it moves")
@@ -559,16 +593,15 @@ export function MobileApp() {
   const board = width - 2 * EDGE - insets.left - insets.right; // sideways: the board's width
 
   return (
-    <View style={[s.root, { backgroundColor: ground }]}>
-      <StatusBar hidden={full} barStyle={c.dark ? "light-content" : "dark-content"} />
-      <NavigationBar hidden={full} />
-      <BlurTargetView ref={glassTarget} style={[StyleSheet.absoluteFill, { backgroundColor: ground }]}>
+    <Ground>
+      <SystemBars />
+      <GroundTarget ref={glassTarget}>
         {/* no colours around the pages: each page takes its own (see ThemeProvider's `scoped`) */}
         <KeepColors>
           <Backdrop shift={sideways ? 0 : iCur} />
         </KeepColors>
         {sideways ? (
-          <KeepColors>
+          <KeepColors defer={panel || !onboarded /* App settings or the first run over it */}>
           {/* the board's loops rest while something covers it, as a page's do */}
           <PageActive value={!panel && !limitsAsk && !tour && onboarded}>
           <View style={s.grow}>
@@ -602,7 +635,7 @@ export function MobileApp() {
             </Page>
           ))
         )}
-      </BlurTargetView>
+      </GroundTarget>
       <KeepColors>
       {sideways ? (
         <SidePanel open={panel} title={TITLES.app} lede={LEDES.app} onClose={() => setPanel(false)} target={glassTarget}>
@@ -641,10 +674,13 @@ export function MobileApp() {
       {tour && <Tour stops={tour} tablet={tablet} onEnd={endTour} />}
       {!onboarded && <Onboarding b={b} onDone={firstRunDone} />}
       <BluetoothGate onBack={() => !onboarded && b.status === "idle" && void b.connect()} />
+      <UpdateSheet tablet={tablet} />
       <Toast note={note} />
-      {launching && <Launch ready={!onboarded || b.status === "connected"} onGone={launched} />}
+      {/* ready once connected, or once it's clear they won't be soon (their sound is elsewhere: in the case, or on
+          another device), so the logo doesn't hold the full 1.3 s for nothing */}
+      {launching && <Launch ready={!onboarded || b.status === "connected" || b.pcLinked === false} onGone={launched} />}
       </KeepColors>
-    </View>
+    </Ground>
   );
 }
 

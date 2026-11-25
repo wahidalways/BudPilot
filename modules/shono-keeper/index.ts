@@ -8,6 +8,10 @@ export type SoundDevice = { address: string; name: string };
 /** Where the phone was when the earbuds last disconnected (`at`: ms since 1970); `place`: a street name, when found. */
 export type DeviceClass = { lowRam: boolean; ramGb: number; sdk: number };
 export type LastSeenPlace = { lat: number; lng: number; accuracy: number; at: number; place?: string };
+/** An update's download so far (bytes; `total` -1 when unknown). */
+export type UpdateProgress = { received: number; total: number };
+/** Android's installer: its prompt is up ("confirm"), or how it ended. */
+export type UpdateStatus = { status: "confirm" | "installed" | "cancelled" | "failed"; message?: string | null };
 type KeeperModule = {
   start(title: string, text: string): boolean;
   stop(): void;
@@ -27,6 +31,12 @@ type KeeperModule = {
   getLastSeen(): Promise<LastSeenPlace | null>;
   clearLastSeen(): void;
   locationOn?(): boolean; // missing in builds made before it
+  // missing in builds made before 1.0.2
+  downloadUpdate?(url: string, name: string, sha256: string | null, size: number | null): Promise<string>;
+  cancelUpdateDownload?(): void;
+  installUpdate?(path: string): Promise<void>;
+  addListener(event: "onUpdateProgress", listener: (e: UpdateProgress) => void): Subscription;
+  addListener(event: "onUpdateStatus", listener: (e: UpdateStatus) => void): Subscription;
   addListener(event: "onStopPressed" | "onSoundDevicesChanged" | "onLastSeen", listener: () => void): Subscription;
   addListener(event: "onLater", listener: (e: { id: number }) => void): Subscription;
   addListener(event: "onGameChanged", listener: (e: { playing: boolean }) => void): Subscription;
@@ -98,6 +108,19 @@ export const clearLastSeen = () => native?.clearLastSeen();
 export const locationOn = () => native?.locationOn?.() ?? true;
 /** A new place was saved (or its street name found). */
 export const onLastSeen = (listener: () => void): Subscription => native?.addListener("onLastSeen", listener) ?? { remove() {} };
+
+/** Check for updates: whether Shono can download and install a new release itself (not in Expo Go, a browser or a
+ * build made before it could). */
+export const canInstallUpdates = () => !!native?.downloadUpdate && !!native.installUpdate;
+/** Downloads a release APK into Shono's cache and checks its fingerprint; resolves the file's path. Rejects with code
+ * ERR_CANCELLED when cancelled. */
+export const downloadUpdate = (url: string, name: string, sha256: string | null, size: number | null) =>
+  native?.downloadUpdate ? native.downloadUpdate(url, name, sha256, size) : Promise.reject(new Error("Needs the Shono app"));
+export const cancelUpdateDownload = () => native?.cancelUpdateDownload?.();
+/** Opens Android's install prompt; how it goes arrives through onUpdateStatus. */
+export const installUpdate = (path: string) => (native?.installUpdate ? native.installUpdate(path) : Promise.reject(new Error("Needs the Shono app")));
+export const onUpdateProgress = (listener: (e: UpdateProgress) => void): Subscription => native?.addListener("onUpdateProgress", listener) ?? { remove() {} };
+export const onUpdateStatus = (listener: (e: UpdateStatus) => void): Subscription => native?.addListener("onUpdateStatus", listener) ?? { remove() {} };
 
 /** The notification's Stop button. */
 export const onStopPressed = (listener: () => void): Subscription => native?.addListener("onStopPressed", listener) ?? { remove() {} };

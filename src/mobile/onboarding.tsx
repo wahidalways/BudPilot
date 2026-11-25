@@ -75,7 +75,7 @@ function Pulse({ delay, color }: { delay: number; color: string }) {
   const p = useSharedValue(0.3);
   useEffect(() => {
     if (reduce) return;
-    const t = setTimeout(() => p.set(withRepeat(withSequence(withTiming(1, { duration: 480 }), withTiming(0.3, { duration: 720 })), -1)), delay);
+    const t = setTimeout(() => p.set(withRepeat(withSequence(withTiming(1, { duration: 480 }), withTiming(0.3, { duration: 720 })), 8)), delay); // ~10 s, then dim and still
     return () => clearTimeout(t);
   }, [delay, reduce, p]);
   const a = useAnimatedStyle(() => ({ opacity: p.get(), transform: [{ scale: 0.8 + p.get() * 0.2 }] }));

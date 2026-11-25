@@ -55,7 +55,10 @@ async function earbudsPlayingHere(): Promise<string | undefined | "unknown"> {
 /** Whether the earbuds' sound is on this phone (undefined: can't tell), now and whenever it changes. Shono follows the
  * sound: it holds the earbuds' one control link while they play here, and lets another device have it otherwise. */
 export function watchSoundHere(cb: (here: boolean | undefined) => void): () => void {
-  if (NO_BLUETOOTH || Platform.OS !== "android") return () => {};
+  if (NO_BLUETOOTH || Platform.OS !== "android") {
+    cb(undefined); // can't tell, now and later (sample earbuds in Expo Go)
+    return () => {};
+  }
   let alive = true;
   let asked = 0; // a slower, older answer must not overwrite a newer one
   const look = async () => {
@@ -218,8 +221,11 @@ export async function connectEarbuds({ reuse = false, ask = false } = {}): Promi
       const c = e.characteristic.toLowerCase();
       if (e.peripheral !== id || (c !== NOTIFY && c !== "ae02")) return;
       const bytes = Uint8Array.from(e.value);
-      // what the earbuds start themselves (not answers to Shono's reads), for the log: FE DC BA, then the flags
-      if (bytes[3] & 0x80) logLine(`earbuds said ${Array.from(bytes.subarray(3, 24), (x) => x.toString(16).padStart(2, "0")).join(" ")}`);
+      // what the earbuds start themselves (not answers to Shono's reads), for the log: FE DC BA, then the flags. Not
+      // their routine battery news (C2) or a volume step (09 with FF 02 01): those came constantly, and the volume is
+      // logged as "earbuds' volume" anyway
+      const routine = bytes[4] === 0xc2 || (bytes[4] === 0x09 && bytes[8] === 0xff && bytes[9] === 0x02 && bytes[10] === 0x01);
+      if (bytes[3] & 0x80 && !routine) logLine(`earbuds said ${Array.from(bytes.subarray(3, 24), (x) => x.toString(16).padStart(2, "0")).join(" ")}`);
       onData(bytes);
     }),
     BleManager.onDisconnectPeripheral((e) => {

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { PermissionsAndroid, Platform } from "react-native";
 
 import { usingSample } from "@/ble/connect";
-import { keepChipParts } from "@/screens/home/parts";
+import { keepChipParts } from "@/screens/home/shared";
 import type { BudPilot } from "@/screens/home/use-bud-pilot";
 import { seconds, today } from "@/utils/corrections";
 import { loadPref, savePref } from "@/utils/prefs";

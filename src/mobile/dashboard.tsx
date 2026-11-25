@@ -8,15 +8,15 @@ import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } fr
 import Animated, { Easing, FadeIn, useAnimatedStyle, useReducedMotion, useSharedValue, withSpring, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { fnName, gesture } from "@/screens/home/touch-controls";
+import { fnName, gesture } from "@/screens/home/shared";
 import type { BudPilot } from "@/screens/home/use-bud-pilot";
 import { F, useColors } from "@/theme";
 
 import { FindPage } from "./find";
 import { Glass } from "./glass";
-import { DeviceCard, NoiseCard, type TourRefs, Welcome } from "./home";
+import { DeviceCard, Leave, NoiseCard, type TourRefs, useLeaving, Welcome } from "./home";
 import { FnGlyph } from "./icons";
-import { Card, CardHead, GearButton, Mark, Press, Seg, Switch, tick, Txt } from "./kit";
+import { Card, CardHead, GearButton, Mark, Press, Rise, Seg, Switch, tick, Txt } from "./kit";
 import { LatencyCheck } from "./latency";
 
 import { AutoGamesRow, EARS, EqPage, GameEqPicker, notConnectedText, TouchFacts, Turbo, useKeyPicker, WearRow } from "./pages";
@@ -31,6 +31,8 @@ const live = (b: BudPilot) => b.status === "connected" && !!b.state;
 function Rest({ b, title }: { b: BudPilot; title: string }) {
   const { title: what, line } = notConnectedText(b);
   return (
+    // fades in where the card was, rather than replacing it in one frame
+    <Animated.View entering={FadeIn.duration(220)}>
     <Card>
       <CardHead title={title} />
       <View style={s.rest}>
@@ -38,6 +40,7 @@ function Rest({ b, title }: { b: BudPilot; title: string }) {
         <Txt v="sub">{line}</Txt>
       </View>
     </Card>
+    </Animated.View>
   );
 }
 
@@ -145,32 +148,36 @@ function TouchCard({ b, tablet, fill }: { b: BudPilot; tablet: boolean; fill?: b
  * by side, then the EQ, Touch and Find across. `width`: the board's. */
 export function DashboardBoard({ b, sideways, width, refs, tablet }: { b: BudPilot; sideways: boolean; width: number; refs?: TourRefs; tablet: boolean }) {
   const on = live(b);
+  // upright, the controls fade out in place when the earbuds go, then make room (as on a phone's Home)
+  const { shown, leaving } = useLeaving(on);
   // each card sits in a View the tour can find (collapsable: kept as a real view, so it can be measured)
   // sideways, each column ends with the others: the earbuds card, the EQ card and the touch list take up what their
   // column is short of the tallest (the earbuds centre in it, the curve grows, the gestures spread)
   const device = (
     <View key="device" ref={refs?.device} collapsable={false} style={sideways && s.grow}>
-      <DeviceCard b={b} photos={1.15} fill={sideways} />
+      <DeviceCard b={b} photos={1.15} fill={sideways} holding={!sideways && leaving} />
     </View>
   );
+  // sideways a card turns into its "Waiting" placeholder at once (which fades in); upright it's held while it fades
+  const controls = sideways ? on : shown && !!b.state;
   const noise = (
     <View key="noise" ref={refs?.noise} collapsable={false} style={!sideways && s.grow}>
-      {on ? <NoiseCard b={b} footer notice fill={!sideways} /> : <Rest b={b} title="Noise control" />}
+      {controls ? <NoiseCard b={b} footer notice fill={!sideways} /> : <Rest b={b} title="Noise control" />}
     </View>
   );
   const eq = (
     <View key="eq" ref={refs?.eq} collapsable={false} style={sideways && s.grow}>
-      {on ? <EqPage b={b} ui={{ tablet }} one fill={sideways} /> : <Rest b={b} title="Equalizer" />}
+      {controls ? <EqPage b={b} ui={{ tablet }} one fill={sideways} /> : <Rest b={b} title="Equalizer" />}
     </View>
   );
   const game = (
     <View key="game" ref={refs?.game} collapsable={false} style={!sideways && s.grow}>
-      {on ? <GameCard b={b} fill={!sideways} /> : <Rest b={b} title="Game mode" />}
+      {controls ? <GameCard b={b} fill={!sideways} /> : <Rest b={b} title="Game mode" />}
     </View>
   );
   const touch = (touchFill: boolean) => (
     <View key="touch" ref={refs?.touch} collapsable={false} style={touchFill && s.grow}>
-      {on ? <TouchCard b={b} tablet={tablet} fill={touchFill} /> : <Rest b={b} title="Touch controls" />}
+      {controls ? <TouchCard b={b} tablet={tablet} fill={touchFill} /> : <Rest b={b} title="Touch controls" />}
     </View>
   );
   const find = <FindPage key="find" b={b} wide={!sideways} />;
@@ -194,18 +201,23 @@ export function DashboardBoard({ b, sideways, width, refs, tablet }: { b: BudPil
     <View ref={refs?.stack} collapsable={false} style={s.col}>
       <Welcome b={b} />
       {device}
-      {on && (
-        <>
-          {/* side by side, the same height: noise spreads its parts, Game keeps its own */}
-          <View style={s.row}>
-            {noise}
-            {game}
+      {controls && (
+        <Leave leaving={leaving}>
+          <View style={s.col}>
+            {/* side by side, the same height: noise spreads its parts, Game keeps its own */}
+            <View style={s.row}>
+              {noise}
+              {game}
+            </View>
+            {eq}
+            {touch(false)}
           </View>
-          {eq}
-          {touch(false)}
-        </>
+        </Leave>
       )}
-      {find}
+      {/* fades with them, then rises in its new place (a new key: Rise plays when it mounts) */}
+      <Leave key={controls ? "with" : "alone"} leaving={leaving}>
+        <Rise k={controls ? 0 : 2}>{find}</Rise>
+      </Leave>
     </View>
   );
 }

@@ -7,8 +7,8 @@ test("reads come every 30 s in the background, but every 3 s once one went unans
   assert.equal(readEvery(false, 0), READ_MS);
   assert.equal(readEvery(true, 0), BG_READ_MS);
   assert.equal(readEvery(true, 1), READ_MS);
-  // 4 misses close the link: about 4 × (3 s wait + 3 s reply timeout), not 4 × 30 s
-  assert.ok(4 * (readEvery(true, 1) + 3000) <= 25_000);
+  // 3 misses close the link (use-earbuds DEAD_AFTER): at most 3 × (3 s wait + 3 s reply timeout), not 3 × 30 s
+  assert.ok(3 * (readEvery(true, 1) + 3000) <= 18_000);
 });
 
 test("failed automatic tries wait longer each time, never more than 20 s", () => {

@@ -5,6 +5,8 @@
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <!-- "Run without limits": Android's own question about battery optimisation (App settings, or offered once) -->
   <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+  <!-- App settings › Check for updates: Shono installs its own new release (Android asks the person first) -->
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
   <!-- Game mode › Turn on with games: which app is in front (Usage access, which the user allows in Android's settings) -->
   <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
   <!-- and whether it's a game: apps you can open from the launcher (Android 11+ hides others from Shono) -->
