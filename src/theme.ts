@@ -1,4 +1,4 @@
-import { createContext, createElement, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, createElement, type ReactNode, useCallback, useContext, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useColorScheme } from "react-native";
 
 import { loadPref, savePref } from "@/utils/prefs";
@@ -195,12 +195,16 @@ export function ThemeProvider({ onTheme, scoped, children }: { onTheme?: (t: The
 
 /** The colours for one part of a `scoped` screen. Out of sight (`live` false) it keeps the ones it last showed and
  * takes new ones when it's shown again: a new theme or accent re-renders only what's on screen (the phone's other
- * pages stay mounted, out of sight). */
-export function KeepColors({ live = true, children }: { live?: boolean; children: ReactNode }) {
+ * pages stay mounted, out of sight). `defer`: it's covered (App settings open over it), so it takes new colours just
+ * after what's on top, in a render React can pause: the sheet where the colour was picked answers at once instead of
+ * waiting for the whole page under it (the user, 2026-11-25: "changing theme and accent makes the app slow"). */
+export function KeepColors({ live = true, defer = false, children }: { live?: boolean; defer?: boolean; children: ReactNode }) {
   const { c } = useTheme();
   const [kept, setKept] = useState(c);
   if (live && kept !== c) setKept(c); // its only setter, and the value reads the live colours anyway (see Sheet)
-  return createElement(ColorsContext.Provider, { value: live ? c : kept }, children);
+  const now = live ? c : kept;
+  const soon = useDeferredValue(now);
+  return createElement(ColorsContext.Provider, { value: defer ? soon : now }, children);
 }
 
 export const useTheme = (): Theme => {

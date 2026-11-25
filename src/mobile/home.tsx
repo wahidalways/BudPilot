@@ -1,14 +1,14 @@
 // The earbuds at a glance: the phone's Home tab, and the earbuds pane beside the pages on a tablet.
-import { type ComponentProps, type ComponentRef, type RefObject, use, useEffect, useRef, useState } from "react";
+import { type ComponentProps, type ComponentRef, type ReactNode, type RefObject, use, useEffect, useRef, useState } from "react";
 import { Image, ScrollView, StyleSheet, Text, View } from "react-native";
-import Animated, { Easing, FadeIn, FadeOut, useAnimatedStyle, useReducedMotion, useSharedValue, withTiming } from "react-native-reanimated";
+import Animated, { Easing, FadeIn, FadeOut, LayoutAnimationConfig, useAnimatedStyle, useReducedMotion, useSharedValue, withTiming } from "react-native-reanimated";
 
 import { usingSample } from "@/ble/connect";
 import { HOCO_EQ35 as P } from "@/devices/hoco-eq35";
 import { ancOn } from "@/hooks/use-earbuds";
 import { ANC_LEVELS } from "@/hooks/use-adaptive-anc";
 import type { Battery } from "@/jieli/earbuds";
-import { gameEqChoices, keepChipParts, STRENGTHS, useJustCorrected } from "@/screens/home/parts";
+import { gameEqChoices, keepChipParts, STRENGTHS, useJustCorrected } from "@/screens/home/shared";
 import { type BudPilot, modeName } from "@/screens/home/use-bud-pilot";
 import { useEqEditor } from "@/screens/home/use-eq-editor";
 import { F, useColors, useTheme } from "@/theme";
@@ -94,10 +94,12 @@ function Bud({ label, level, photo, tall, live, order, k = 1 }: { label: string;
 }
 
 /** Name (with its maker's logo), connection, and the three batteries. Not connected, it says what to do. `photos`: how
- * big the photos are (a tablet's earbuds tile shows them larger); `fill`: the card fills its tile, the earbuds centred. */
-export function DeviceCard({ b, photos = 1, fill }: { b: BudPilot; photos?: number; fill?: boolean }) {
+ * big the photos are (a tablet's earbuds tile shows them larger); `fill`: the card fills its tile, the earbuds centred.
+ * `holding`: the earbuds just went, and the batteries stay a moment while the cards under it fade out (HomeCards). */
+export function DeviceCard({ b, photos = 1, fill, holding }: { b: BudPilot; photos?: number; fill?: boolean; holding?: boolean }) {
   const c = useColors();
   const live = b.status === "connected" && !!b.state;
+  const buds = live || (!!holding && !!b.state);
   const bat = b.state?.battery;
   const { logo, model } = brandOf(b.state?.name ?? "");
   // looking: connecting, or waiting while their sound is on this phone (or can't be told); otherwise they're in the case
@@ -122,18 +124,19 @@ export function DeviceCard({ b, photos = 1, fill }: { b: BudPilot; photos?: numb
           </Txt>
         </View>
       </View>
-      {live ? (
+      {buds ? (
         <View style={[s.buds, fill && s.budsFill]}>
-          <Bud label="Left" level={bat?.left ?? null} photo={PHOTOS.left} live={live} order={0} k={photos} />
-          <Bud label="Case" level={bat?.case ?? null} photo={PHOTOS.case} live={live} tall order={1} k={photos} />
-          <Bud label="Right" level={bat?.right ?? null} photo={PHOTOS.right} live={live} order={2} k={photos} />
+          <Bud label="Left" level={bat?.left ?? null} photo={PHOTOS.left} live order={0} k={photos} />
+          <Bud label="Case" level={bat?.case ?? null} photo={PHOTOS.case} live tall order={1} k={photos} />
+          <Bud label="Right" level={bat?.right ?? null} photo={PHOTOS.right} live order={2} k={photos} />
         </View>
       ) : (
-        <View style={fill && s.budsFill}>
+        // fades in where the batteries were, rather than replacing them in one frame
+        <Animated.View entering={FadeIn.duration(220)} style={fill && s.budsFill}>
           <Radar looking={looking} k={photos} />
-        </View>
+        </Animated.View>
       )}
-      {!live && (
+      {!buds && (
         <View style={s.waitMsg}>
           <Txt v="sub" style={s.center}>
             {b.status === "idle"
@@ -223,6 +226,9 @@ export function NoiseCard({ b, compact, onMore, fill, footer, notice }: { b: Bud
         value={state.anc}
         onChange={choose}
       />
+      {/* the rows fade into each other, but not when the whole card goes (the earbuds disconnecting): Reanimated keeps
+          a removed card on screen while a row inside it fades, so the card hung over what had moved into its place */}
+      <LayoutAnimationConfig skipExiting>
       <View style={s.swap}>
         {state.anc === 1 ? (
           <Animated.View key="anc" entering={FadeIn.duration(220)} exiting={FadeOut.duration(120)} style={s.swapRow}>
@@ -249,6 +255,7 @@ export function NoiseCard({ b, compact, onMore, fill, footer, notice }: { b: Bud
           </Animated.View>
         )}
       </View>
+      </LayoutAnimationConfig>
       {b.error ? (
         <Txt v="sub" style={{ color: c.danger }}>
           {b.error}
@@ -453,6 +460,33 @@ function EqGameTiles({ b, onEdit, onGame, eqRef, gameRef }: { b: BudPilot; onEdi
   );
 }
 
+const LEAVE_MS = 180; // after the earbuds go, the controls fade this long in place before they make room
+
+/** `live`, held a moment after it ends (`leaving`), so the cards that need the earbuds can fade out in place. Removed
+ * at once, they took everything under them up in one frame, and the earbuds card changed at the same moment (the
+ * user, 2026-11-25: "the animation of going out stutters and broken"). Back on, they show at once. */
+export function useLeaving(live: boolean) {
+  const reduce = useReducedMotion();
+  const [kept, setKept] = useState(live);
+  if (live && !kept) setKept(true);
+  useEffect(() => {
+    if (live) return;
+    const t = setTimeout(() => setKept(false), reduce ? 0 : LEAVE_MS);
+    return () => clearTimeout(t);
+  }, [live, reduce]);
+  return { shown: live || kept, leaving: !live && kept };
+}
+
+/** Fades its children out, sinking a little, while `leaving` (on the UI thread; nothing moves around them). */
+export function Leave({ leaving, children }: { leaving: boolean; children: ReactNode }) {
+  const p = useSharedValue(1);
+  useEffect(() => {
+    p.set(leaving ? withTiming(0, { duration: LEAVE_MS - 20, easing: Easing.out(Easing.quad) }) : 1);
+  }, [leaving, p]);
+  const a = useAnimatedStyle(() => ({ opacity: p.get(), transform: [{ translateY: (1 - p.get()) * 8 }] }));
+  return <Animated.View style={a}>{children}</Animated.View>;
+}
+
 /** Where the tour finds Home's cards. */
 export type TourRefs = Record<"stack" | "device" | "noise" | "eq" | "game" | "touch", RefObject<ComponentRef<typeof View> | null>>;
 
@@ -460,7 +494,7 @@ export type TourRefs = Record<"stack" | "device" | "noise" | "eq" | "game" | "to
 /** `onFind`: a phone's way into Find my earbuds (tablets have it in the rail). Shown connected or not: Last seen is
  * for when they're gone. */
 export function HomeCards({ b, onEdit, onFind, onGame, compact, refs }: { b: BudPilot; onEdit: () => void; onFind?: () => void; onGame?: () => void; compact?: boolean; refs?: TourRefs }) {
-  const live = b.status === "connected" && !!b.state;
+  const { shown, leaving } = useLeaving(b.status === "connected" && !!b.state);
   return (
     <View style={s.stack} ref={refs?.stack} collapsable={false}>
       <Rise k={0}>
@@ -468,25 +502,30 @@ export function HomeCards({ b, onEdit, onFind, onGame, compact, refs }: { b: Bud
       </Rise>
       <Rise k={1}>
         <View ref={refs?.device} collapsable={false}>
-          <DeviceCard b={b} />
+          <DeviceCard b={b} holding={leaving} />
         </View>
       </Rise>
-      {live && (
-        <>
-          <Rise k={2}>
-            <View ref={refs?.noise} collapsable={false}>
-              <NoiseCard b={b} compact={compact} />
-            </View>
-          </Rise>
-          <Rise k={3}>
-            <EqGameTiles b={b} onEdit={onEdit} onGame={onGame} eqRef={refs?.eq} gameRef={refs?.game} />
-          </Rise>
-        </>
+      {shown && b.state && (
+        <Leave leaving={leaving}>
+          <View style={s.stack}>
+            <Rise k={2}>
+              <View ref={refs?.noise} collapsable={false}>
+                <NoiseCard b={b} compact={compact} />
+              </View>
+            </Rise>
+            <Rise k={3}>
+              <EqGameTiles b={b} onEdit={onEdit} onGame={onGame} eqRef={refs?.eq} gameRef={refs?.game} />
+            </Rise>
+          </View>
+        </Leave>
       )}
       {onFind && (
-        <Rise k={6}>
-          <FindCard onOpen={onFind} />
-        </Rise>
+        // fades with the others, then rises in its new place (a new key: Rise plays when it mounts)
+        <Leave key={shown ? "with" : "alone"} leaving={leaving}>
+          <Rise k={shown ? 6 : 2}>
+            <FindCard onOpen={onFind} />
+          </Rise>
+        </Leave>
       )}
     </View>
   );

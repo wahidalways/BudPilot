@@ -65,11 +65,15 @@ class ShonoKeeperModule : Module() {
   // Game mode › Turn on with games: which app is in front, looked at every few seconds while it's on
   private var front: String? = null
   private var looked = 0L // when the usage events were last read
+  private val games = HashMap<String, Boolean>() // package → is it a game (gameLook runs on the main thread only)
   private var gamePlaying: Boolean? = null
   private val gameLook: Runnable = object : Runnable {
     override fun run() {
       val context = appContext.reactContext ?: return
-      val playing = runCatching { gameInFront(context) }.getOrDefault(false)
+      // screen off: no game is being played, and there's nothing to look up (music kept the phone awake, so this ran
+      // ~900 times an hour in the pocket); the next look with the screen on reads the events since the last one
+      val screenOn = (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
+      val playing = screenOn && runCatching { gameInFront(context) }.getOrDefault(false)
       if (playing != gamePlaying) {
         gamePlaying = playing
         sendEvent("onGameChanged", mapOf("playing" to playing))
@@ -82,7 +86,7 @@ class ShonoKeeperModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("ShonoKeeper")
-    Events("onStopPressed", "onSoundDevicesChanged", "onLastSeen", "onLater", "onGameChanged")
+    Events("onStopPressed", "onSoundDevicesChanged", "onLastSeen", "onLater", "onGameChanged", "onUpdateProgress", "onUpdateStatus")
 
     OnCreate {
       current = this@ShonoKeeperModule
@@ -155,6 +159,32 @@ class ShonoKeeperModule : Module() {
       val mem = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
       mapOf("lowRam" to am.isLowRamDevice, "ramGb" to mem.totalMem / 1_073_741_824.0, "sdk" to Build.VERSION.SDK_INT)
     }
+    // Updating Shono from inside Shono (UpdateInstaller.kt): the release's APK (progress as onUpdateProgress), then
+    // Android's install prompt (results as onUpdateStatus)
+    AsyncFunction("downloadUpdate") { url: String, name: String, sha256: String?, size: Double?, promise: Promise ->
+      val context = appContext.reactContext ?: return@AsyncFunction promise.reject("ERR_UPDATE", "Shono is not ready", null)
+      // its own thread: a download takes a while, and mustn't hold up Shono's other native calls
+      Thread({
+        try {
+          val file = UpdateInstaller.download(context, url, name, sha256, size?.toLong()) { received, total ->
+            sendEvent("onUpdateProgress", mapOf("received" to received.toDouble(), "total" to total.toDouble()))
+          }
+          promise.resolve(file.absolutePath)
+        } catch (error: InterruptedException) {
+          promise.reject("ERR_CANCELLED", "Cancelled", error)
+        } catch (error: Throwable) {
+          promise.reject("ERR_UPDATE", error.message ?: "Download failed", error)
+        }
+      }, "shono-update").start()
+    }
+    Function("cancelUpdateDownload") { UpdateInstaller.cancel() }
+    AsyncFunction("installUpdate") { path: String ->
+      val context = appContext.reactContext ?: throw IllegalStateException("Shono is not ready")
+      UpdateInstaller.install(context, java.io.File(path)) { status, message ->
+        sendEvent("onUpdateStatus", mapOf("status" to status, "message" to message))
+      }
+    }
+
     AsyncFunction("readLog") { appContext.reactContext?.let { ShonoLog.read(it) } ?: "" }
     Function("clearLog") { appContext.reactContext?.let { ShonoLog.clear(it) } }
 
@@ -324,11 +354,13 @@ class ShonoKeeperModule : Module() {
     }
     val pkg = front ?: return false
     if (pkg == context.packageName) return false
-    val info = context.packageManager.getApplicationInfo(pkg, 0)
-    @Suppress("DEPRECATION")
-    return (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && info.category == ApplicationInfo.CATEGORY_GAME) ||
-      (info.flags and ApplicationInfo.FLAG_IS_GAME) != 0
+    // whether an app is a game doesn't change while it's installed: asked once per app
+    return games.getOrPut(pkg) { isGame(context.packageManager.getApplicationInfo(pkg, 0)) }
   }
+
+  @Suppress("DEPRECATION") // FLAG_IS_GAME: how apps made for Android 7 and older say so
+  private fun isGame(info: ApplicationInfo) =
+    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && info.category == ApplicationInfo.CATEGORY_GAME) || (info.flags and ApplicationInfo.FLAG_IS_GAME) != 0
 
   private fun phoneVolume(): String {
     val audio = appContext.reactContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return "phone volume unknown"

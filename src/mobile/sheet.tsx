@@ -48,7 +48,8 @@ export function Sheet({
   const open = useSharedValue(0);
   const drag = useSharedValue(0);
   useEffect(() => {
-    drag.set(0);
+    // only on opening: reset on closing, a sheet dragged down jumped back up by the drag before sliding away
+    if (isOpen) drag.set(0);
     open.set(
       isOpen
         ? reduce

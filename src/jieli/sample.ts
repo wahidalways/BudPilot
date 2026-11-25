@@ -72,11 +72,12 @@ export function sampleTransport(): Transport {
     }
     stage++;
   };
+  let dropped = () => {};
   return {
     name: "Sample earbuds",
     write: async (b) => void setTimeout(() => reply(b), 12), // a little Bluetooth-like delay
     onData: (cb) => (send = cb),
-    onDisconnect: () => {},
-    close: async () => {},
+    onDisconnect: (cb) => (dropped = cb),
+    close: async () => dropped(), // like a real link: closing reports the drop (so a drop can be tried in the preview)
   };
 }

@@ -50,8 +50,9 @@ export function useEqEditor(b: BudPilot) {
 
   // "+ New": a name to start from ("My EQ 2"), selected so typing replaces it
   const startNew = () => {
-    let n = my.list.length + 1;
-    while (my.list.some((e) => e.name.toLowerCase() === `my eq ${n}`)) n++;
+    // the first free number (no `n++` on a captured variable: React's compiler skips a hook that has one)
+    const taken = new Set(my.list.map((e) => e.name.toLowerCase()));
+    const n = Array.from({ length: my.list.length + 2 }, (_, i) => my.list.length + 1 + i).find((k) => !taken.has(`my eq ${k}`));
     setNaming({ name: `My EQ ${n}` });
   };
 

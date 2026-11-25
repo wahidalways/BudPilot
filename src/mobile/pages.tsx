@@ -1,7 +1,7 @@
 // The phone's tabs and the tablet's pages: Sound, Equalizer, Game, Touch controls, and App settings.
 import { type ComponentProps, use, useEffect, useState } from "react";
 import { AppState, Linking, Platform, Pressable, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
-import Animated, { Easing, FadeIn, FadeOut, interpolate, LinearTransition, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withSequence, withSpring, withTiming } from "react-native-reanimated";
+import Animated, { Easing, FadeIn, FadeOut, interpolate, LayoutAnimationConfig, LinearTransition, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withSequence, withSpring, withTiming } from "react-native-reanimated";
 import Svg, { G, Path } from "react-native-svg";
 
 import { usingSample } from "@/ble/connect";
@@ -9,8 +9,7 @@ import { HOCO_EQ35 as P } from "@/devices/hoco-eq35";
 import { ancOn } from "@/hooks/use-earbuds";
 import { ANC_LEVELS } from "@/hooks/use-adaptive-anc";
 import { EqCurve } from "@/screens/home/eq-curve";
-import { CREDIT_NAME, MODE_SUBS, eqChoices } from "@/screens/home/parts";
-import { fnName, gesture } from "@/screens/home/touch-controls";
+import { CREDIT_NAME, eqChoices, fnName, gesture, MODE_SUBS } from "@/screens/home/shared";
 import { type BudPilot, modeName } from "@/screens/home/use-bud-pilot";
 import { useEqEditor } from "@/screens/home/use-eq-editor";
 import { ACCENTS, F, hsl, useColors, useTheme } from "@/theme";
@@ -24,12 +23,13 @@ import { askBackgroundUnrestricted, backgroundUnrestricted, clearLog, keeperAvai
 import Ionicons from "@expo/vector-icons/Ionicons";
 
 import { EAR_OUTLINE, FnGlyph, NoiseGlyph } from "./icons";
-import { BATTERY_STYLES } from "./battery";
+import { BATTERY_STYLES, useAppActive } from "./battery";
 import { PageActive, useGlass, useSurface } from "./glass";
 import { eqTitle, GameEqChips, PHONE_STRENGTHS } from "./home";
 import { LatencyCheck } from "./latency";
 import { Button, Card, CardHead, Chip, Lockup, Pill, Pills, Press, Seg, Switch, T, tick, ToggleRow, Txt } from "./kit";
 import { type Anchor, measureAnchor, MenuRow, Popover, Sheet } from "./sheet";
+import { UpdatesCard } from "./update";
 
 /** What pages need to know about where they are. */
 export type Ui = { tablet: boolean };
@@ -67,11 +67,14 @@ function Field({ mode, level }: { mode: number; level: number }) {
   const { width } = useWindowDimensions();
   const reduce = useReducedMotion();
   const shown = use(PageActive); // the waves rest while their page is out of sight
+  const app = useAppActive();
   const t = useSharedValue(0);
   useEffect(() => {
     t.set(0);
-    if (!reduce && shown) t.set(withRepeat(withTiming(1, { duration: mode === 0 ? 3200 : 2400, easing: Easing.linear }), -1));
-  }, [mode, reduce, shown, t]);
+    // a few passes (~10 s), then still: endless, they redrew the page and the bars' blur on every frame for as long as
+    // the Sound page stayed open. They play again when the mode changes or the page is shown again.
+    if (!reduce && shown && app) t.set(withRepeat(withTiming(1, { duration: mode === 0 ? 3200 : 2400, easing: Easing.linear }), 4));
+  }, [mode, reduce, shown, app, t]);
   const wall = [2.5, 5, 8][level] ?? 5;
   const scale = Math.min(1, (width - 64) / 360);
   return (
@@ -160,6 +163,9 @@ export function SoundPage({ b }: { b: BudPilot }) {
   const ncLevel = b.noisePref?.ncLevel ?? ANC_LEVELS[b.adaptive.current];
   const modes = [0, 1, 2].filter((m) => state.ancGains[m]);
   return (
+    // the strength card fades out when ANC goes off, but not when the earbuds disconnect: then the whole page goes at
+    // once (a fade inside it kept the old page on screen over the "Waiting" card)
+    <LayoutAnimationConfig skipExiting>
     <View style={s.stack}>
       <Field mode={state.anc} level={b.adaptive.current} />
       <View style={s.tiles}>
@@ -185,6 +191,7 @@ export function SoundPage({ b }: { b: BudPilot }) {
         <KeepCard b={b} />
       </Animated.View>
     </View>
+    </LayoutAnimationConfig>
   );
 }
 
@@ -477,6 +484,8 @@ type EqAction = { label: string; icon: ComponentProps<typeof Ionicons>["name"]; 
 function EqActions({ actions, k }: { actions: EqAction[]; k: string }) {
   const c = useColors();
   return (
+    // a new set fades over the old one, but nothing lingers when the EQ card itself goes (see NoiseCard)
+    <LayoutAnimationConfig skipExiting>
     <View style={s.actSlot}>
       {actions.length > 0 && (
     <Animated.View key={k} entering={FadeIn.duration(180)} exiting={FadeOut.duration(120)} style={[StyleSheet.absoluteFill, s.acts]}>
@@ -505,6 +514,7 @@ function EqActions({ actions, k }: { actions: EqAction[]; k: string }) {
     </Animated.View>
       )}
     </View>
+    </LayoutAnimationConfig>
   );
 }
 
@@ -959,6 +969,7 @@ export function AppContent({ b, onTour, onFirstRun }: { b: BudPilot; onTour?: ()
       </Card>
       {keeperAvailable() && <BackgroundCard />}
       {keeperAvailable() && <LogCard />}
+      <UpdatesCard />
       <Card>
         <View style={s.about}>
           <Lockup size={36} />

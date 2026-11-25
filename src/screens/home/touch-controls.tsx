@@ -8,14 +8,14 @@ import { Card, controlStyle, ToggleRow, Txt } from "@/ui/kit";
 
 import { PanelHead } from "./panels";
 import type { BudPilot } from "./use-bud-pilot";
+import { fnName, gesture } from "./shared";
+
+export { fnName, gesture } from "./shared"; // for the Windows views
 
 const EARS = [
   { ear: 1, label: "Left" },
   { ear: 2, label: "Right" },
 ];
-export const gesture = (taps: number) => ["Tap", "Double tap", "Triple tap"][taps - 1] ?? `${taps} taps`;
-export const fnName = (fn: number) => P.keyFunctions.find((f) => f.fn === fn)?.name ?? `Other (${fn})`;
-
 function Taps({ n, color, column }: { n: number; color: string; column?: boolean }) {
   return (
     <View style={[s.taps, column && s.tapsColumn]} accessible={false}>
